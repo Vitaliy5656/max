@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Data
+data/max.db
+data/*.db.migrated
+*.db-journal
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+.npm/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Testing
+htmlcov/
+.coverage
+.coverage.*
+.tox/
+.nox/
+
+# Misc
+*.bak
+*.tmp
+*.temp

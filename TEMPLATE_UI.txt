@@ -1,0 +1,976 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  MessageSquare, 
+  FileText, 
+  Bot, 
+  LayoutTemplate, 
+  Settings, 
+  Search, 
+  Plus, 
+  Send, 
+  Mic, 
+  MoreVertical, 
+  ChevronRight,
+  Cpu, 
+  Trash2, 
+  Play,
+  CheckCircle2,
+  AlertTriangle,
+  History,
+  Terminal,
+  ChevronDown,
+  Copy,
+  RotateCw,
+  ThumbsUp,
+  ThumbsDown,
+  Sparkles,
+  StopCircle,
+  Globe,
+  Image as ImageIcon,
+  Sun,
+  Menu,
+  Zap,
+  Heart,
+  Activity,
+  X,
+  BrainCircuit,
+  Radio,
+  Fingerprint,
+  MessageCircle,
+  Code,
+  Briefcase,
+  PenTool,
+  Clock,
+  ArrowRight
+} from 'lucide-react';
+
+// --- Mock Data ---
+const MOCK_MODELS = ["Auto (Smart)", "Llama-3-70B", "Mistral Large", "Gemma 7B"];
+
+const INITIAL_MESSAGES = [
+  { 
+    id: 1, 
+    role: 'system', 
+    content: 'Привет! Я MAX. Мои нейронные связи готовы к работе. Чем займемся?', 
+    timestamp: '10:00',
+    model: 'System'
+  },
+];
+
+const MOCK_CHATS = [
+  { id: 'c1', title: 'Анализ конкурентов', date: '14:20' },
+  { id: 'c2', title: 'React компоненты', date: 'Вчера' },
+  { id: 'c3', title: 'План поездки на Алтай', date: 'Вчера' },
+  { id: 'c4', title: 'Сравнение LLM моделей', date: '2 дн.' },
+  { id: 'c5', title: 'Дебаг Python скрипта', date: '3 дн.' },
+];
+
+const MOCK_DOCS = [
+  { id: '1', name: 'Project_Specs_2025.pdf', size: '2.4 MB', type: 'pdf', chunks: 142, status: 'indexed' },
+  { id: '2', name: 'Meeting_Notes_Q3.docx', size: '1.1 MB', type: 'docx', chunks: 45, status: 'processing' },
+];
+
+const MOCK_TEMPLATES = [
+  { id: 't1', name: 'Code Review', category: 'Dev', content: 'Проведи ревью следующего кода на предмет безопасности и производительности. Выдели критические ошибки.' },
+  { id: 't2', name: 'Email Summary', category: 'Work', content: 'Сделай краткую выжимку из этого письма и предложи вежливый вариант отказа.' },
+  { id: 't3', name: 'Blog Post', category: 'Creative', content: 'Напиши структуру статьи для блога на тему AI трендов 2025 года.' },
+  { id: 't4', name: 'Bug Report', category: 'Dev', content: 'Составь отчет об ошибке в формате JIRA: Steps to reproduce, Expected, Actual.' },
+  { id: 't5', name: 'Meeting Agenda', category: 'Work', content: 'Составь повестку встречи для обсуждения квартальных результатов.' },
+];
+
+const MOCK_AUTOGPT_STEPS = [
+  { id: 1, action: 'search', title: 'Поиск информации', desc: 'Ищу "React 19 new features" в Google...', status: 'done' },
+  { id: 2, action: 'read', title: 'Чтение документации', desc: 'Анализирую официальный блог React...', status: 'done' },
+  { id: 3, action: 'think', title: 'Планирование', desc: 'Структурирую данные для таблицы...', status: 'active' },
+  { id: 4, action: 'write', title: 'Генерация отчета', desc: 'Создаю markdown файл...', status: 'pending' },
+];
+
+// --- Styles ---
+const styles = `
+@keyframes solid-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(79, 70, 229, 0.1); }
+  50% { transform: scale(1.02); box-shadow: 0 0 35px rgba(79, 70, 229, 0.25); }
+}
+@keyframes inner-glow {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.6; }
+}
+@keyframes orbit-rotate-iq {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes orbit-rotate-eq {
+  from { transform: rotate(360deg); }
+  to { transform: rotate(0deg); }
+}
+.stream-mask {
+  mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%);
+}
+
+/* Custom Dark Scrollbar */
+.dark-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.dark-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dark-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+}
+.dark-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+`;
+
+// --- Utility Components ---
+
+const DenseCore = ({ intelligence, empathy }) => {
+  const size = 200;
+  const center = size / 2;
+  
+  // 1. IQ Orbit (Outer)
+  const rIQ = size / 2 - 10;
+  const cIQ = 2 * Math.PI * rIQ;
+  const oIQ = cIQ - (intelligence / 100) * cIQ;
+
+  // 2. EQ Orbit (Inner)
+  const rEQ = size / 2 - 28; // Distinct gap
+  const cEQ = 2 * Math.PI * rEQ;
+  const oEQ = cEQ - (empathy / 100) * cEQ;
+
+  return (
+    <div className="relative flex items-center justify-center py-6" style={{ width: size, height: size }}>
+      
+      {/* --- THE DENSE CORE (Solid Object) --- */}
+      <div className="absolute z-10 flex items-center justify-center">
+         {/* Layer 1: The Mass (Black/Dark Matter) */}
+         <div 
+           className="w-28 h-28 rounded-full bg-[#050505] shadow-[inset_0_0_40px_rgba(0,0,0,1)] border border-white/5 relative z-20"
+           style={{ animation: 'solid-pulse 8s infinite ease-in-out' }}
+         >
+            {/* Glossy Reflection for solidity */}
+            <div className="absolute top-0 left-0 w-full h-full rounded-full opacity-20"
+                 style={{ background: 'radial-gradient(circle at 35% 35%, rgba(255,255,255,0.15), transparent 50%)' }}>
+            </div>
+         </div>
+
+         {/* Layer 2: The Energy Leak (Glow between layers) */}
+         <div 
+            className="absolute inset-0 w-28 h-28 rounded-full bg-indigo-900/40 blur-xl z-10"
+            style={{ animation: 'inner-glow 4s infinite alternate' }}
+         ></div>
+         
+         {/* Layer 3: The Aura (Deepest) */}
+         <div className="absolute w-36 h-36 bg-indigo-950/20 rounded-full blur-2xl z-0"></div>
+      </div>
+
+      {/* --- TWO DISTINCT ORBITS --- */}
+      <svg className="absolute inset-0 w-full h-full z-30 pointer-events-none drop-shadow-[0_0_10px_rgba(0,0,0,0.8)]">
+        <defs>
+          <linearGradient id="grad_iq" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#6366f1" /> {/* Indigo */}
+            <stop offset="100%" stopColor="#3b82f6" /> {/* Blue */}
+          </linearGradient>
+          <linearGradient id="grad_eq" x1="100%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#f43f5e" /> {/* Rose */}
+            <stop offset="100%" stopColor="#fbbf24" /> {/* Amber */}
+          </linearGradient>
+        </defs>
+
+        {/* Orbit 1: IQ (Slow Clockwise) */}
+        <g style={{ animation: 'orbit-rotate-iq 120s linear infinite', transformOrigin: 'center' }}>
+           {/* Track */}
+           <circle cx={center} cy={center} r={rIQ} stroke="rgba(255,255,255,0.03)" strokeWidth={1} fill="none" />
+           {/* Indicator */}
+           <circle 
+             cx={center} cy={center} r={rIQ} 
+             stroke="url(#grad_iq)" strokeWidth={2} fill="none" 
+             strokeDasharray={cIQ} strokeDashoffset={oIQ} strokeLinecap="round"
+             className="transition-all duration-1000 ease-out opacity-90"
+           />
+           {/* Particle */}
+           <circle cx={center} cy={center - rIQ} r={2} fill="#818cf8" className="animate-pulse" />
+        </g>
+
+        {/* Orbit 2: EQ (Slow Counter-Clockwise) */}
+        <g style={{ animation: 'orbit-rotate-eq 90s linear infinite', transformOrigin: 'center' }}>
+           {/* Track */}
+           <circle cx={center} cy={center} r={rEQ} stroke="rgba(255,255,255,0.03)" strokeWidth={1} fill="none" />
+           {/* Indicator */}
+           <circle 
+             cx={center} cy={center} r={rEQ} 
+             stroke="url(#grad_eq)" strokeWidth={2} fill="none" 
+             strokeDasharray={cEQ} strokeDashoffset={oEQ} strokeLinecap="round"
+             className="transition-all duration-1000 ease-out opacity-90"
+           />
+           {/* Particle */}
+           <circle cx={center} cy={center - rEQ} r={2} fill="#fb7185" className="animate-pulse" />
+        </g>
+      </svg>
+
+      {/* --- Central Symbol --- */}
+      <div className="absolute z-40 flex items-center justify-center opacity-40 mix-blend-screen pointer-events-none">
+         <BrainCircuit size={32} className="text-indigo-200" strokeWidth={1} />
+      </div>
+      
+      {/* --- Data Labels --- */}
+      <div className="absolute -bottom-8 w-full flex justify-between px-10 text-[9px] font-mono text-zinc-600 uppercase tracking-widest">
+         <div className="flex flex-col items-center">
+            <span className="text-indigo-500/80 mb-0.5">{Math.round(intelligence)}%</span>
+            <span>IQ</span>
+         </div>
+         <div className="flex flex-col items-center">
+            <span className="text-rose-500/80 mb-0.5">{Math.round(empathy)}%</span>
+            <span>EQ</span>
+         </div>
+      </div>
+    </div>
+  );
+};
+
+const SynapticStream = ({ logs }) => {
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+        const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+        if (scrollHeight - scrollTop - clientHeight < 100) {
+            scrollRef.current.scrollTo({ top: scrollHeight, behavior: 'smooth' });
+        }
+    }
+  }, [logs]);
+
+  return (
+    <div className="flex flex-col w-full h-48 relative group px-2 mb-4">
+      
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 mb-1 opacity-30">
+         <span className="text-[9px] font-mono uppercase tracking-widest text-zinc-500">Синапс</span>
+         <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></div>
+      </div>
+
+      {/* Content */}
+      <div className="relative flex-1 stream-mask overflow-hidden rounded-xl bg-white/[0.01]">
+        <div 
+            ref={scrollRef} 
+            className="absolute inset-0 overflow-y-auto dark-scroll px-3 py-4 space-y-3"
+        >
+          {logs.length === 0 && (
+            <div className="h-full flex flex-col items-center justify-center opacity-10">
+                <Activity size={24} strokeWidth={1} />
+            </div>
+          )}
+          
+          {logs.map((log) => {
+            const isGrowth = log.type === 'growth';
+            const isEmpathy = log.type === 'empathy';
+            const isError = log.type === 'error';
+            
+            let dotColor = 'bg-zinc-800';
+            let textColor = 'text-zinc-600';
+            
+            if (isGrowth) { dotColor = 'bg-indigo-600'; textColor = 'text-indigo-300/70'; }
+            if (isEmpathy) { dotColor = 'bg-rose-600'; textColor = 'text-rose-300/70'; }
+            if (isError) { dotColor = 'bg-red-900'; textColor = 'text-red-400/60'; }
+
+            return (
+                <div key={log.id} className="flex gap-3 items-start animate-in slide-in-from-bottom-2 fade-in duration-700">
+                    <div className={`mt-1.5 w-1 h-1 rounded-full shrink-0 transition-colors duration-500 ${dotColor}`} />
+                    <div className="flex-1 min-w-0">
+                        <p className={`text-[10px] leading-snug font-medium transition-colors duration-500 ${textColor}`}>
+                            {log.text}
+                        </p>
+                        <span className="text-[8px] font-mono text-zinc-800 block mt-0.5">{log.time}</span>
+                    </div>
+                </div>
+            );
+          })}
+          <div className="h-4"></div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Modal = ({ isOpen, onClose, title, children, danger = false, onConfirm, confirmText = "Confirm" }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
+      <div className="bg-[#09090b] border border-white/10 rounded-2xl w-full max-w-md shadow-2xl scale-100 animate-in zoom-in-95 duration-300 overflow-hidden ring-1 ring-white/5">
+        <div className="p-6">
+          <h3 className="text-lg font-semibold text-white mb-2">{title}</h3>
+          <div className="text-zinc-400 text-sm mb-6">{children}</div>
+          <div className="flex justify-end gap-3">
+            <button 
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg text-sm font-medium text-zinc-300 hover:bg-zinc-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
+            >
+              Отмена
+            </button>
+            <button 
+              onClick={() => { onConfirm(); onClose(); }}
+              className={`px-4 py-2 rounded-lg text-sm font-medium text-white transition-all shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090b] ${
+                danger 
+                  ? 'bg-red-600 hover:bg-red-500 focus-visible:ring-red-500' 
+                  : 'bg-indigo-600 hover:bg-indigo-500 focus-visible:ring-indigo-500'
+              }`}
+            >
+              {confirmText}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const GlassCard = ({ children, className = "" }) => (
+  <div className={`bg-zinc-900/40 backdrop-blur-md border border-white/5 rounded-2xl shadow-sm ${className}`}>
+    {children}
+  </div>
+);
+
+const ThinkingIndicator = () => (
+  <div className="flex items-center gap-3 p-4 bg-zinc-900/50 border border-white/5 rounded-2xl max-w-xs animate-in fade-in slide-in-from-bottom-2 duration-500">
+    <div className="relative w-5 h-5 flex items-center justify-center">
+       <span className="absolute w-full h-full rounded-full bg-indigo-500/20 animate-ping duration-[2000ms]"></span>
+       <Sparkles size={14} className="text-indigo-400 relative z-10 animate-pulse duration-[3000ms]" />
+    </div>
+    <span className="text-xs font-medium text-zinc-400 bg-clip-text text-transparent bg-gradient-to-r from-zinc-200 to-zinc-500 animate-pulse">
+      MAX анализирует контекст...
+    </span>
+  </div>
+);
+
+// --- Sub-components for Friendly UI ---
+
+const NavItem = ({ icon, label, active, onClick, collapsed }) => (
+  <button 
+    onClick={onClick}
+    className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 group relative focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+      active 
+        ? 'bg-zinc-800 text-white font-medium' 
+        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
+    }`}
+  >
+    <div className={`flex items-center justify-center transition-colors ${active ? 'text-indigo-400' : 'group-hover:text-indigo-300'}`}>
+        {icon}
+    </div>
+    {!collapsed && <span className="text-sm truncate flex-1 text-left">{label}</span>}
+  </button>
+);
+
+const IconButton = ({ icon, tooltip, onClick }) => (
+  <div className="group relative flex items-center justify-center">
+    <button 
+      onClick={onClick}
+      className="p-2 rounded-lg transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 active:scale-95 text-zinc-400 hover:text-white hover:bg-white/10"
+    >
+      {icon}
+    </button>
+    {tooltip && (
+      <span className="absolute top-10 scale-0 transition-all duration-200 rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-medium text-white group-hover:scale-100 z-50 whitespace-nowrap border border-zinc-700 shadow-xl pointer-events-none select-none">
+        {tooltip}
+      </span>
+    )}
+  </div>
+);
+
+const ActionBtn = ({ icon, onClick }) => (
+    <button 
+        onClick={onClick}
+        className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500 active:scale-90"
+    >
+        {icon}
+    </button>
+);
+
+const ResourceToggle = ({ icon: Icon, label, active, onClick }) => (
+  <button 
+    onClick={onClick}
+    className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all duration-300 w-full md:w-auto ${
+      active 
+        ? 'bg-indigo-500/10 border-indigo-500/50 text-indigo-200' 
+        : 'bg-zinc-900/30 border-white/5 text-zinc-500 hover:border-white/10'
+    }`}
+  >
+    <div className={`w-5 h-5 rounded-full flex items-center justify-center ${active ? 'text-indigo-400' : 'text-zinc-600'}`}>
+      <Icon size={16} />
+    </div>
+    <span className="text-xs font-medium">{label}</span>
+    <div className={`ml-auto w-8 h-4 rounded-full p-0.5 transition-colors ${active ? 'bg-indigo-500' : 'bg-zinc-800'}`}>
+      <div className={`w-3 h-3 rounded-full bg-white shadow-sm transition-transform ${active ? 'translate-x-4' : 'translate-x-0'}`} />
+    </div>
+  </button>
+);
+
+const TimelineStep = ({ step }) => {
+  const isDone = step.status === 'done';
+  const isActive = step.status === 'active';
+  
+  return (
+    <div className="flex gap-4 group">
+      {/* Icon/Status */}
+      <div className="flex flex-col items-center">
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center border transition-all duration-500 z-10 ${
+          isDone ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400' :
+          isActive ? 'bg-indigo-500/10 border-indigo-500/50 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.3)]' :
+          'bg-zinc-900 border-zinc-800 text-zinc-600'
+        }`}>
+          {isDone ? <CheckCircle2 size={14} /> : 
+           isActive ? <div className="w-2 h-2 bg-current rounded-full animate-ping" /> : 
+           <div className="w-2 h-2 bg-current rounded-full" />}
+        </div>
+        <div className={`w-0.5 flex-1 my-2 transition-colors duration-500 ${isDone ? 'bg-emerald-500/20' : 'bg-zinc-800'}`} />
+      </div>
+      
+      {/* Content */}
+      <div className={`pb-8 transition-all duration-500 ${isActive ? 'opacity-100 translate-x-0' : 'opacity-60'}`}>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-xs font-bold uppercase tracking-wider text-zinc-500">{step.action}</span>
+          {isActive && <span className="text-[10px] px-1.5 py-0.5 bg-indigo-500/20 text-indigo-300 rounded border border-indigo-500/20 animate-pulse">Active</span>}
+        </div>
+        <h4 className={`text-sm font-medium mb-1 ${isActive ? 'text-white' : 'text-zinc-400'}`}>{step.title}</h4>
+        <p className="text-xs text-zinc-500 font-mono">{step.desc}</p>
+      </div>
+    </div>
+  );
+};
+
+const TemplateCard = ({ tpl, onUse }) => (
+  <div 
+    onClick={() => onUse(tpl)}
+    className="group relative bg-zinc-900/40 backdrop-blur-sm border border-white/5 rounded-2xl p-5 hover:border-indigo-500/30 transition-all duration-300 cursor-pointer overflow-hidden"
+  >
+    <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+    
+    <div className="flex justify-between items-start mb-4 relative z-10">
+      <div className={`p-2 rounded-lg ${
+        tpl.category === 'Dev' ? 'bg-blue-500/10 text-blue-400' :
+        tpl.category === 'Work' ? 'bg-emerald-500/10 text-emerald-400' :
+        'bg-purple-500/10 text-purple-400'
+      }`}>
+        {tpl.category === 'Dev' ? <Code size={18} /> :
+         tpl.category === 'Work' ? <Briefcase size={18} /> :
+         <PenTool size={18} />}
+      </div>
+      <div className="opacity-0 group-hover:opacity-100 transition-all duration-300 transform group-hover:translate-x-0 translate-x-4">
+        <div className="p-1.5 bg-white/10 rounded-lg text-white hover:bg-indigo-600 transition-colors">
+          <ArrowRight size={14} />
+        </div>
+      </div>
+    </div>
+    
+    <h3 className="text-sm font-semibold text-zinc-200 mb-2 group-hover:text-white transition-colors relative z-10">{tpl.name}</h3>
+    <p className="text-xs text-zinc-500 line-clamp-2 leading-relaxed relative z-10 group-hover:text-zinc-400 transition-colors">
+      {tpl.content}
+    </p>
+  </div>
+);
+
+// --- Main Application ---
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState('chat'); 
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Chat State
+  const [messages, setMessages] = useState(INITIAL_MESSAGES);
+  const [inputVal, setInputVal] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [selectedModel, setSelectedModel] = useState(MOCK_MODELS[0]);
+  const messagesEndRef = useRef(null);
+  const textareaRef = useRef(null);
+
+  // RAG State
+  const [documents, setDocuments] = useState(MOCK_DOCS);
+  const [deleteModal, setDeleteModal] = useState({ isOpen: false, docId: null, docName: '' });
+  const [isDragging, setIsDragging] = useState(false);
+
+  // Auto-GPT State
+  const [agentGoal, setAgentGoal] = useState("");
+  const [agentRunning, setAgentRunning] = useState(false);
+  const [agentResources, setAgentResources] = useState({ internet: true, files: false });
+  const [agentSteps, setAgentSteps] = useState(MOCK_AUTOGPT_STEPS);
+
+  // Templates State
+  const [tplCategory, setTplCategory] = useState('All');
+
+  // Core Stats
+  const [intelligence, setIntelligence] = useState(30); 
+  const [empathy, setEmpathy] = useState(30);
+  const [systemLogs, setSystemLogs] = useState([]);
+
+  // Responsive Check
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 1024;
+      setIsMobile(mobile);
+      if (mobile) setSidebarOpen(false);
+      else setSidebarOpen(true);
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Auto scroll
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isGenerating]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+    }
+  }, [inputVal]);
+
+  // Logic Helpers
+  const addLog = (text, type = 'info') => {
+    const newLog = {
+      id: Date.now(),
+      text,
+      type,
+      time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+    };
+    setSystemLogs(prev => [...prev, newLog]); 
+  };
+
+  const handleDeleteDocument = () => {
+    setDocuments(prev => prev.filter(d => d.id !== deleteModal.docId));
+    addLog(`Файл "${deleteModal.docName}" удален из памяти`, 'info');
+    setDeleteModal({ isOpen: false, docId: null, docName: '' });
+  };
+
+  const handleAction = (action) => {
+    if (action === 'copy') addLog("Текст скопирован в буфер", 'info');
+    else if (action === 'like') {
+      setEmpathy(prev => Math.min(prev + 15, 100));
+      addLog("Эмпатия повышена: резонанс", 'empathy');
+    }
+  };
+
+  const handleStartAgent = () => {
+    if (!agentGoal.trim()) return;
+    setAgentRunning(true);
+    addLog("Автономный агент запущен", 'growth');
+    // Simulate steps completion for demo
+    setTimeout(() => {
+        setAgentRunning(false);
+        addLog("Агент выполнил задачу", 'growth');
+        setIntelligence(prev => Math.min(prev + 10, 100));
+    }, 5000);
+  };
+
+  const handleUseTemplate = (tpl) => {
+    setActiveTab('chat');
+    setInputVal(tpl.content);
+    addLog(`Применен шаблон: ${tpl.name}`, 'info');
+  };
+
+  const handleSendMessage = () => {
+    if (!inputVal.trim() || isGenerating) return;
+    
+    const newMsg = { id: Date.now(), role: 'user', content: inputVal, timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) };
+    setMessages(prev => [...prev, newMsg]);
+    setInputVal("");
+    setIsGenerating(true);
+
+    setTimeout(() => {
+        const response = `Я понял ваш запрос. Вот пример того, как это могло бы выглядеть в реальном приложении. Интерфейс поддерживает стриминг токенов, что создает ощущение живого общения.
+
+Также я могу отформатировать код:
+\`\`\`python
+def hello_world():
+    print('Hello AI')
+\`\`\`
+Есть ли еще что-то, что я могу сделать для вас?`;
+        
+        setIsGenerating(true);
+        const id = Date.now() + 1;
+        
+        // Growth Trigger
+        setIntelligence(prev => Math.min(prev + 8, 100)); 
+        addLog("Ответ сгенерирован", 'growth');
+
+        setMessages(prev => [...prev, { 
+            id, 
+            role: 'assistant', 
+            content: '', 
+            timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+            model: selectedModel
+        }]);
+
+        const words = response.split(" ");
+        let i = 0;
+        let currentText = "";
+        
+        const interval = setInterval(() => {
+          if (i >= words.length) {
+            clearInterval(interval);
+            setIsGenerating(false);
+            return;
+          }
+          currentText += (i === 0 ? "" : " ") + words[i];
+          setMessages(prev => prev.map(msg => msg.id === id ? { ...msg, content: currentText } : msg));
+          i++;
+        }, 50); 
+    }, 1500);
+  };
+
+  const filteredTemplates = tplCategory === 'All' 
+    ? MOCK_TEMPLATES 
+    : MOCK_TEMPLATES.filter(t => t.category === tplCategory);
+
+  return (
+    <div className={`flex h-screen w-full overflow-hidden bg-[#09090b] text-zinc-100 font-sans selection:bg-indigo-500/30 selection:text-indigo-200`}>
+      <style>{styles}</style>
+      
+      {/* --- Sidebar (The Core) --- */}
+      {isMobile && sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 animate-in fade-in duration-300"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      <aside 
+        className={`
+          fixed lg:static inset-y-0 left-0 z-40
+          ${sidebarOpen ? 'w-80 translate-x-0' : 'w-20 -translate-x-full lg:translate-x-0'} 
+          bg-[#09090b] border-r border-white/5 flex flex-col transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)]
+        `}
+      >
+        {/* Header */}
+        <div className="h-16 flex items-center justify-between px-6 border-b border-white/5 shrink-0">
+          <div className="flex items-center">
+             <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center shadow-[0_0_15px_rgba(79,70,229,0.4)] group cursor-pointer active:scale-95 transition-transform duration-300">
+                <Cpu size={20} className="text-white" />
+             </div>
+             {sidebarOpen && <span className="ml-3 font-bold text-xl tracking-tight text-white animate-in fade-in duration-500">MAX <span className="text-zinc-500 font-normal">AI</span></span>}
+          </div>
+          {sidebarOpen && <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-zinc-500 hover:text-white transition-colors"><X size={20} /></button>}
+        </div>
+
+        {/* --- DYNAMIC SECTION: CHAT & HISTORY --- */}
+        <div className="flex-1 flex flex-col overflow-y-auto scrollbar-none py-4 px-3 gap-1">
+            <NavItem icon={<MessageSquare size={18} />} label="Новый чат" active={activeTab === 'chat'} onClick={() => {setActiveTab('chat'); if(isMobile) setSidebarOpen(false)}} collapsed={!sidebarOpen} />
+            
+            {sidebarOpen && (
+              <div className="mt-6 mb-2 px-2 flex items-center justify-between animate-in fade-in duration-500">
+                <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">Недавние диалоги</span>
+                <span className="text-[10px] text-zinc-700 bg-zinc-900 px-1.5 py-0.5 rounded-md border border-white/5">{MOCK_CHATS.length}</span>
+              </div>
+            )}
+            
+            <div className="space-y-0.5">
+              {MOCK_CHATS.map(chat => (
+                <button 
+                  key={chat.id}
+                  onClick={() => {setActiveTab('chat'); if(isMobile) setSidebarOpen(false)}}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group text-left ${!sidebarOpen ? 'justify-center' : ''} hover:bg-zinc-900/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500`}
+                >
+                  <div className="text-zinc-500 group-hover:text-zinc-300 transition-colors">
+                    <MessageCircle size={16} />
+                  </div>
+                  {sidebarOpen && (
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-zinc-400 group-hover:text-zinc-200 truncate transition-colors">{chat.title}</div>
+                      <div className="text-[10px] text-zinc-600 truncate">{chat.date}</div>
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+        </div>
+
+        {/* --- STATIC BOTTOM SECTION: TOOLS & CORE --- */}
+        <div className="shrink-0 bg-[#09090b] border-t border-white/5 flex flex-col">
+           
+           {/* Tools Navigation */}
+           <div className="px-3 py-4 space-y-1">
+              {sidebarOpen && <div className="px-2 mb-2 text-[10px] font-bold text-zinc-600 uppercase tracking-wider">Инструменты</div>}
+              
+              <NavItem icon={<FileText size={18} />} label="База знаний (RAG)" active={activeTab === 'rag'} onClick={() => {setActiveTab('rag'); if(isMobile) setSidebarOpen(false)}} collapsed={!sidebarOpen} />
+              <NavItem icon={<Bot size={18} />} label="Авто-агент" active={activeTab === 'autogpt'} onClick={() => {setActiveTab('autogpt'); if(isMobile) setSidebarOpen(false)}} collapsed={!sidebarOpen} />
+              <NavItem icon={<LayoutTemplate size={18} />} label="Шаблоны" active={activeTab === 'templates'} onClick={() => {setActiveTab('templates'); if(isMobile) setSidebarOpen(false)}} collapsed={!sidebarOpen} />
+              <NavItem icon={<History size={18} />} label="Архив событий" active={activeTab === 'history'} onClick={() => {setActiveTab('history'); if(isMobile) setSidebarOpen(false)}} collapsed={!sidebarOpen} />
+           </div>
+
+           {/* Expand/Collapse Trigger */}
+           {!sidebarOpen && (
+              <button 
+                onClick={() => setSidebarOpen(true)} 
+                className="w-full flex items-center justify-center p-4 text-zinc-600 hover:text-white transition-colors border-t border-white/5"
+              >
+                 <ChevronRight size={18} />
+              </button>
+           )}
+
+           {/* THE LIVING CORE */}
+           {sidebarOpen && (
+             <div className="p-4 pt-2 border-t border-white/5 animate-in slide-in-from-bottom-5 fade-in duration-700 flex flex-col items-center">
+                <SynapticStream logs={systemLogs} />
+                <DenseCore intelligence={intelligence} empathy={empathy} />
+             </div>
+           )}
+        </div>
+      </aside>
+
+      {/* --- Main Content --- */}
+      <main className="flex-1 flex flex-col relative overflow-hidden bg-[#09090b]">
+        {/* Ambient Background */}
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,_rgba(79,70,229,0.08),_transparent_40%)] pointer-events-none"></div>
+        <div className="absolute bottom-0 right-0 w-[500px] h-[500px] bg-indigo-600/5 blur-[120px] rounded-full pointer-events-none"></div>
+
+        {/* Header */}
+        <header className="h-16 flex items-center justify-between px-4 md:px-6 border-b border-white/5 bg-[#09090b]/80 backdrop-blur-xl z-10 sticky top-0">
+          <div className="flex items-center gap-3">
+             <button 
+                onClick={() => setSidebarOpen(true)}
+                className="lg:hidden p-2 -ml-2 text-zinc-400 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 rounded-lg"
+             >
+                <Menu size={20} />
+             </button>
+             
+             {activeTab === 'chat' ? (
+                <div className="flex items-center gap-2 cursor-pointer group px-2 py-1.5 rounded-lg hover:bg-white/5 transition-all focus-visible:ring-2 focus-visible:ring-indigo-500">
+                    <span className="text-lg font-semibold text-white/90 group-hover:text-white">MAX AI</span>
+                    <span className="text-zinc-600">/</span>
+                    <div className="flex items-center gap-2 text-sm text-zinc-300">
+                        <span>{selectedModel}</span>
+                        <ChevronDown size={14} className="text-zinc-500" />
+                    </div>
+                </div>
+             ) : (
+                <h2 className="text-lg font-semibold text-white/90">
+                  {activeTab === 'rag' && 'База Знаний'}
+                  {activeTab === 'autogpt' && 'Автономный Агент'}
+                  {activeTab === 'templates' && 'Галерея Шаблонов'}
+                  {activeTab === 'history' && 'Архив Событий'}
+                </h2>
+             )}
+          </div>
+          
+          <div className="flex items-center gap-3">
+             <div className="relative hidden md:flex group">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 group-hover:text-indigo-400 transition-colors" size={15} />
+                <input 
+                  type="text" 
+                  placeholder="Поиск..." 
+                  className="w-64 bg-zinc-900/50 border border-white/5 rounded-lg py-1.5 pl-9 pr-4 text-sm text-zinc-300 focus:outline-none focus:bg-zinc-900 focus:ring-2 focus:ring-indigo-500/50 transition-all placeholder:text-zinc-600"
+                />
+             </div>
+             <IconButton icon={<Sun size={18} />} tooltip="Тема" />
+          </div>
+        </header>
+
+        {/* Content Views */}
+        <div className="flex-1 overflow-hidden relative">
+          
+          {/* VIEW: CHAT (Existing) */}
+          {activeTab === 'chat' && (
+            <div className="h-full flex flex-col max-w-4xl mx-auto w-full relative">
+              {/* Chat implementation remains same for brevity, reusing core logic */}
+              <div className="flex-1 overflow-y-auto px-4 py-6 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+                <div className="space-y-8 pb-4">
+                    {messages.map((msg) => (
+                    <div key={msg.id} className={`flex gap-4 md:gap-6 ${msg.role === 'user' ? 'flex-row-reverse' : ''} group animate-in fade-in slide-in-from-bottom-2 duration-700`}>
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-1 shadow-lg ${msg.role === 'user' ? 'bg-zinc-800 text-zinc-400' : 'bg-gradient-to-br from-indigo-600 to-violet-700 text-white shadow-indigo-500/20'}`}>
+                            {msg.role === 'user' ? <span className="text-xs font-bold">VM</span> : <Cpu size={16} />}
+                        </div>
+                        <div className={`flex flex-col max-w-[85%] md:max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                            <div className="flex items-center gap-2 mb-1 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
+                                <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">{msg.role === 'user' ? 'You' : 'Max AI'}</span>
+                                <span className="text-[10px] text-zinc-600">•</span>
+                                <span className="text-[10px] text-zinc-600">{msg.timestamp}</span>
+                            </div>
+                            <div className={`prose prose-invert max-w-none text-sm leading-7 ${msg.role === 'user' ? 'text-zinc-100 text-right' : 'text-zinc-300'}`}>
+                                {msg.content.split('\n').map((line, i) => (
+                                    <p key={i} className="mb-1 min-h-[1.5em]">{line || <br/>}</p>
+                                ))}
+                            </div>
+                            {msg.role !== 'user' && (
+                                <div className="flex items-center gap-1 mt-2.5 -ml-1.5">
+                                    <ActionBtn icon={<Copy size={14} />} onClick={() => handleAction('copy')} />
+                                    <ActionBtn icon={<RotateCw size={14} />} />
+                                    <div className="h-3 w-[1px] bg-white/10 mx-1"></div>
+                                    <ActionBtn icon={<ThumbsUp size={14} />} onClick={() => handleAction('like')} />
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                    ))}
+                    {isGenerating && messages[messages.length - 1]?.role === 'user' && (
+                        <div className="pl-12 md:pl-14"><ThinkingIndicator /></div>
+                    )}
+                    <div ref={messagesEndRef} className="h-4" />
+                </div>
+              </div>
+              <div className="px-4 pb-6 pt-2 z-20">
+                 <div className="relative max-w-4xl mx-auto">
+                    <div className={`relative bg-zinc-900/90 backdrop-blur-xl border transition-all duration-300 rounded-[2rem] shadow-2xl overflow-hidden ${isGenerating ? 'border-indigo-500/30 ring-1 ring-indigo-500/10' : 'border-white/10 hover:border-white/20 focus-within:border-indigo-500/50 focus-within:ring-1 focus-within:ring-indigo-500/20'}`}>
+                        <textarea ref={textareaRef} value={inputVal} onChange={(e) => setInputVal(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSendMessage())} placeholder="Спроси о чем угодно..." className="w-full bg-transparent border-none text-zinc-200 placeholder:text-zinc-500 px-5 py-4 min-h-[56px] max-h-[200px] resize-none focus:ring-0 text-[15px] scrollbar-thin scrollbar-thumb-zinc-700" rows={1} />
+                        <div className="flex items-center justify-between px-3 pb-3">
+                           <div className="flex items-center gap-1">
+                              <IconButton icon={<Plus size={18} />} />
+                              <IconButton icon={<ImageIcon size={18} />} />
+                              <IconButton icon={<Globe size={18} />} />
+                           </div>
+                           <button onClick={handleSendMessage} disabled={!inputVal.trim()} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 active:scale-90 ${inputVal.trim() ? 'bg-indigo-600 text-white hover:bg-indigo-500' : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'}`}><Send size={16} className={inputVal.trim() ? "ml-0.5" : ""} /></button>
+                        </div>
+                    </div>
+                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* VIEW: RAG (Reused) */}
+          {activeTab === 'rag' && (
+            <div className="p-4 md:p-8 max-w-6xl mx-auto h-full overflow-y-auto">
+                <div className="flex justify-between items-end mb-8 animate-in slide-in-from-bottom-4 duration-500">
+                    <div>
+                        <h1 className="text-3xl font-bold text-white mb-2">База Знаний</h1>
+                        <p className="text-zinc-400">Управляйте документами для контекста RAG.</p>
+                    </div>
+                    <button className="flex items-center gap-2 px-5 py-2.5 bg-white text-black font-medium rounded-xl hover:bg-zinc-200 transition-all"><Plus size={18} /><span>Загрузить</span></button>
+                </div>
+                <GlassCard className="overflow-hidden animate-in slide-in-from-bottom-6 duration-700">
+                    <table className="w-full text-left border-collapse min-w-[600px]">
+                        <thead><tr className="border-b border-white/5 bg-zinc-900/50"><th className="p-4 text-xs font-medium text-zinc-500 uppercase tracking-wider pl-6">Имя файла</th><th className="p-4 text-xs font-medium text-zinc-500 uppercase tracking-wider">Тип</th><th className="p-4 text-xs font-medium text-zinc-500 uppercase tracking-wider">Размер</th><th className="p-4 text-xs font-medium text-zinc-500 uppercase tracking-wider">Статус</th><th className="p-4"></th></tr></thead>
+                        <tbody className="divide-y divide-white/5">{documents.map(doc => (<tr key={doc.id} className="hover:bg-white/[0.02] transition-colors"><td className="p-4 pl-6"><div className="flex items-center gap-4"><FileText size={18} className="text-zinc-400" /><span className="text-zinc-200 text-sm">{doc.name}</span></div></td><td className="p-4 text-zinc-500 text-xs">{doc.type}</td><td className="p-4 text-zinc-500 text-sm">{doc.size}</td><td className="p-4"><div className="flex items-center gap-2"><div className={`w-1.5 h-1.5 rounded-full ${doc.status === 'indexed' ? 'bg-emerald-500' : 'bg-amber-500'}`}></div><span className="text-xs text-zinc-400 capitalize">{doc.status}</span></div></td><td className="p-4 text-right"><button onClick={() => setDeleteModal({isOpen:true, docId:doc.id, docName:doc.name})} className="p-2 text-zinc-600 hover:text-red-400"><Trash2 size={16} /></button></td></tr>))}</tbody>
+                    </table>
+                </GlassCard>
+            </div>
+          )}
+
+          {/* VIEW: AUTOGPT (Friendly) */}
+          {activeTab === 'autogpt' && (
+             <div className="p-4 md:p-8 max-w-5xl mx-auto h-full overflow-y-auto">
+                <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+                    <div>
+                        <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Автономный Агент</h1>
+                        <p className="text-zinc-400">Делегируйте сложные задачи. Агент сам построит план и выполнит его.</p>
+                    </div>
+                </div>
+
+                <div className="grid lg:grid-cols-3 gap-8">
+                   <div className="lg:col-span-2 space-y-6">
+                        <GlassCard className="p-6">
+                            <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-4 block">Цель миссии</label>
+                            <textarea 
+                                value={agentGoal}
+                                onChange={(e) => setAgentGoal(e.target.value)}
+                                placeholder="Например: Найди последние новости о GPT-5 и составь сводку..."
+                                className="w-full bg-zinc-950/50 border border-white/10 rounded-xl p-4 text-lg text-zinc-200 placeholder:text-zinc-700 focus:ring-1 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all resize-none min-h-[140px]"
+                            />
+                            <div className="flex flex-wrap items-center justify-between mt-6 gap-4">
+                                <div className="flex gap-2">
+                                    <ResourceToggle icon={Globe} label="Интернет" active={agentResources.internet} onClick={() => setAgentResources(p => ({...p, internet: !p.internet}))} />
+                                    <ResourceToggle icon={FileText} label="Файлы" active={agentResources.files} onClick={() => setAgentResources(p => ({...p, files: !p.files}))} />
+                                </div>
+                                <button 
+                                    onClick={handleStartAgent}
+                                    disabled={!agentGoal.trim() || agentRunning}
+                                    className={`px-6 py-3 rounded-xl font-medium text-sm flex items-center gap-2 transition-all shadow-lg ${
+                                        agentRunning 
+                                        ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' 
+                                        : 'bg-white text-black hover:bg-zinc-200 shadow-white/10'
+                                    }`}
+                                >
+                                    {agentRunning ? <div className="w-4 h-4 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin"/> : <Play size={18} />}
+                                    {agentRunning ? 'Выполнение...' : 'Запустить Агента'}
+                                </button>
+                            </div>
+                        </GlassCard>
+                   </div>
+
+                   <div className="space-y-6">
+                        <div className="px-2">
+                            <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-4">Статус выполнения</h4>
+                            <div className="relative border-l border-zinc-800 pl-8 space-y-8 ml-3">
+                                {agentSteps.map((step, idx) => (
+                                    <div key={step.id} className="relative">
+                                        <div className={`absolute -left-[39px] w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors duration-500 bg-[#09090b] ${
+                                            step.status === 'done' ? 'border-emerald-500 text-emerald-500' :
+                                            step.status === 'active' ? 'border-indigo-500 text-indigo-500 animate-pulse' :
+                                            'border-zinc-800 text-zinc-800'
+                                        }`}>
+                                            {step.status === 'done' && <CheckCircle2 size={12} />}
+                                            {step.status === 'active' && <div className="w-2 h-2 bg-current rounded-full" />}
+                                        </div>
+                                        <div className={`transition-opacity duration-500 ${step.status === 'pending' ? 'opacity-40' : 'opacity-100'}`}>
+                                            <div className="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-1">{step.action}</div>
+                                            <div className="text-sm font-medium text-zinc-200">{step.title}</div>
+                                            {step.status === 'active' && <div className="text-xs text-indigo-400 mt-1">В процессе...</div>}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                   </div>
+                </div>
+             </div>
+          )}
+
+           {/* VIEW: TEMPLATES (Friendly) */}
+           {activeTab === 'templates' && (
+             <div className="p-4 md:p-8 max-w-6xl mx-auto h-full overflow-y-auto">
+                <div className="flex justify-between items-center mb-8">
+                   <div>
+                       <h1 className="text-3xl font-bold text-white mb-2">Галерея Шаблонов</h1>
+                       <p className="text-zinc-400">Готовые промпты для ускорения работы.</p>
+                   </div>
+                   <button className="flex items-center gap-2 px-4 py-2 bg-zinc-900 border border-white/10 hover:bg-zinc-800 text-zinc-300 rounded-lg transition-all text-sm font-medium">
+                      <Plus size={16} /> Создать свой
+                   </button>
+                </div>
+                
+                {/* Category Filter */}
+                <div className="flex gap-2 mb-8 overflow-x-auto pb-2 scrollbar-none">
+                    {['All', 'Dev', 'Work', 'Creative'].map(cat => (
+                        <button 
+                            key={cat}
+                            onClick={() => setTplCategory(cat)}
+                            className={`px-4 py-2 rounded-full text-xs font-medium transition-all border ${
+                                tplCategory === cat 
+                                ? 'bg-white text-black border-white' 
+                                : 'bg-transparent text-zinc-500 border-zinc-800 hover:border-zinc-600 hover:text-zinc-300'
+                            }`}
+                        >
+                            {cat === 'All' ? 'Все' : cat === 'Dev' ? 'Разработка' : cat === 'Work' ? 'Бизнес' : 'Креатив'}
+                        </button>
+                    ))}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in slide-in-from-bottom-4 duration-700">
+                   {filteredTemplates.map(tpl => (
+                      <TemplateCard key={tpl.id} tpl={tpl} onUse={handleUseTemplate} />
+                   ))}
+                </div>
+             </div>
+          )}
+
+        </div>
+      </main>
+
+      {/* --- Global Overlays --- */}
+      <Modal 
+        isOpen={deleteModal.isOpen} 
+        onClose={() => setDeleteModal({ ...deleteModal, isOpen: false })}
+        title="Удалить документ?"
+        danger={true}
+        confirmText="Удалить"
+        onConfirm={handleDeleteDocument}
+      >
+        Вы уверены, что хотите удалить <b>{deleteModal.docName}</b>?
+      </Modal>
+
+    </div>
+  );
+}
