@@ -56,13 +56,15 @@ class BackupManager:
             True if worker was spawned successfully
         """
         if not self.db_path.exists():
-            print("⚠️ Database not found, skipping backup")
+            from .logger import log
+            log.warn("Database not found, skipping backup")
             return False
         
         worker_script = Path(__file__).parent.parent.parent / "scripts" / "backup_worker.py"
         
         if not worker_script.exists():
-            print(f"⚠️ Backup worker script not found: {worker_script}")
+            from .logger import log
+            log.warn(f"Backup worker script not found: {worker_script}")
             return False
         
         try:
@@ -87,11 +89,13 @@ class BackupManager:
                     stderr=subprocess.DEVNULL
                 )
             
-            print("✓ Backup worker spawned")
+            from .logger import log
+            log.api("Backup worker spawned")
             return True
             
         except Exception as e:
-            print(f"✗ Failed to spawn backup worker: {e}")
+            from .logger import log
+            log.error(f"Failed to spawn backup worker: {e}")
             self._update_status("error", error=str(e))
             return False
     
@@ -129,11 +133,13 @@ class BackupManager:
             # Remove uncompressed temp file
             temp_backup.unlink()
             
-            print(f"✓ Local backup created: {backup_file.name}")
+            from .logger import log
+            log.api(f"Local backup created: {backup_file.name}")
             return backup_file
             
         except Exception as e:
-            print(f"✗ Backup failed: {e}")
+            from .logger import log
+            log.error(f"Backup failed: {e}")
             return None
     
     def _update_status(self, status: str, cloud_synced: bool = False, error: str = None):

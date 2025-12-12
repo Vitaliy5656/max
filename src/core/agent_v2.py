@@ -26,6 +26,7 @@ from typing import Optional
 
 from .autogpt import AutoGPTAgent, Step, StepStatus, AutoGPTRun
 from .lm_client import lm_client, TaskType
+from .logger import log
 
 
 class VerificationStatus(Enum):
@@ -286,7 +287,7 @@ class ReflectiveAgent(AutoGPTAgent):
         original_result = step.result
         
         try:
-            print(f"[ReflectiveAgent] Retrying step {step.step_number} with critique: {verification.critique[:100]}...")
+            log.chain(f"Retrying step {step.step_number} with critique: {verification.critique[:100]}...")
             
             # Create a modified prompt that includes the critique
             retry_prompt = f"""Previous attempt failed. Here's your critique:
@@ -312,11 +313,11 @@ Please provide a corrected action with improved approach based on the feedback a
             step.result = f"[RETRY] {response}"
             step.status = StepStatus.COMPLETED
             
-            print(f"[ReflectiveAgent] Retry completed for step {step.step_number}")
+            log.chain(f"Retry completed for step {step.step_number}")
             return step
             
         except Exception as e:
-            print(f"[ReflectiveAgent] Retry failed: {e}")
+            log.error(f"Retry failed: {e}")
             # Keep original result on failure
             step.result = f"{original_result} [RETRY FAILED: {e}]"
             return step

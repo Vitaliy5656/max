@@ -95,7 +95,7 @@ class LMStudioClient:
         if not force_refresh and self._available_models_cache and (now - self._last_scan_time < self._scan_ttl):
             return self._available_models_cache
             
-        print("🔍 Scanning for models via CLI...")
+        log.lm("🔍 Scanning for models via CLI...")
         
         # Try CLI first (Real data)
         real_models = await self._scan_models_cli()
@@ -105,7 +105,7 @@ class LMStudioClient:
             return real_models
             
         # Fallback to config (Legacy/Safe mode)
-        print("⚠️ CLI scan failed, using config fallback")
+        log.warn("CLI scan failed, using config fallback")
         return [
             config.lm_studio.default_model,
             config.lm_studio.reasoning_model,
@@ -137,7 +137,7 @@ class LMStudioClient:
             
             return models
         except Exception as e:
-            print(f"Error scanning models: {e}")
+            log.error(f"Error scanning models: {e}")
             return []
 
     async def list_models(self) -> list[ModelInfo]:
@@ -149,7 +149,7 @@ class LMStudioClient:
                 for model in response.data
             ]
         except Exception as e:
-            print(f"Error listing models API: {e}")
+            log.error(f"Error listing models API: {e}")
             return []
     
     async def sync_state(self) -> Optional[str]:
@@ -159,7 +159,7 @@ class LMStudioClient:
             loaded = await self.get_loaded_model()
             if loaded:
                 if self._current_model != loaded:
-                    print(f"🧩 State healing: {self._current_model} -> {loaded}")
+                    log.lm(f"🧩 State healing: {self._current_model} -> {loaded}")
                     self._current_model = loaded
                 return loaded
                 
@@ -188,7 +188,7 @@ class LMStudioClient:
                 self._current_model = model_key
                 return True
                 
-            print(f"🔄 Loading model: {model_key}...")
+            log.lm(f"🔄 Loading model: {model_key}...")
             
             try:
                 cmd = f"lms load {model_key}"
@@ -199,16 +199,16 @@ class LMStudioClient:
 
                 if result.return_code == 0:
                     self._current_model = model_key
-                    print(f"✓ Model loaded: {model_key}")
+                    log.lm(f"✓ Model loaded: {model_key}")
                     # Force a quick API check to confirm
                     await asyncio.sleep(0.5) 
                     await self.get_loaded_model() 
                     return True
                 else:
-                    print(f"✗ Failed to load model: {result.stderr}")
+                    log.error(f"✗ Failed to load model: {result.stderr}")
                     return False
             except Exception as e:
-                print(f"✗ Error loading model: {e}")
+                log.error(f"✗ Error loading model: {e}")
                 return False
 
     async def unload_model(self, model_key: Optional[str] = None) -> bool:
@@ -225,11 +225,11 @@ class LMStudioClient:
                 if result.return_code == 0:
                     if not model_key or model_key == self._current_model:
                         self._current_model = None
-                    print(f"✓ Model unloaded")
+                    log.lm(f"✓ Model unloaded")
                     return True
                 return False
             except Exception as e:
-                print(f"✗ Error unloading model: {e}")
+                log.error(f"✗ Error unloading model: {e}")
                 return False
     
     async def ensure_model_loaded(self, required_model: str) -> bool:
@@ -259,17 +259,17 @@ class LMStudioClient:
                 req_lower = required_model.lower()
                 cur_lower = current.lower()
                 if req_lower in cur_lower or cur_lower.endswith(req_lower):
-                    print(f"✓ Model already loaded (fuzzy match): {current}")
+                    log.lm(f"✓ Model already loaded (fuzzy match): {current}")
                     self._current_model = current  # Use actual loaded model
                     return True
             
             # If ANY model is loaded and we're not explicitly switching, use it
             if current and (required_model == "auto" or not required_model):
-                print(f"✓ Using currently loaded model: {current}")
+                log.lm(f"✓ Using currently loaded model: {current}")
                 self._current_model = current
                 return True
             
-            print(f"🔄 Hot-swap needed: {current or 'none'} → {required_model}")
+            log.lm(f"🔄 Hot-swap needed: {current or 'none'} → {required_model}")
             
             # Unload current model if different and exists
             if current:
@@ -291,13 +291,13 @@ class LMStudioClient:
 
             if result.return_code == 0:
                 self._current_model = model_key
-                print(f"✓ Model loaded: {model_key}")
+                log.lm(f"✓ Model loaded: {model_key}")
                 return True
             else:
-                print(f"✗ Failed to load model: {result.stderr}")
+                log.error(f"✗ Failed to load model: {result.stderr}")
                 return False
         except Exception as e:
-            print(f"✗ Error in _load_model_impl: {e}")
+            log.error(f"✗ Error in _load_model_impl: {e}")
             return False
 
     def get_mode_config(self, thinking_mode: ThinkingMode):
@@ -309,10 +309,14 @@ class LMStudioClient:
         # Fallback to standard
         return config.lm_studio.thinking_modes["standard"]
     
-    def get_model_for_task(self, task_type: TaskType) -> str:
+    async def get_model_for_task(self, task_type: TaskType) -> str:
         """Smart routing: get best model for task type."""
-        # TODO: Check if these models are actually available via get_available_models()
-        # For now, stick to config defaults
+        # Use available models if cached, else use config defaults
+        # Only do a quick check if we have cache, don't force scan
+        available = await self.get_available_models(force_refresh=False)
+        
+        # TODO: Implement sophisticated matching against 'available'
+        # For now, sticking to config defaults but logging intent
         if task_type == TaskType.VISION:
             return config.lm_studio.vision_model
         elif task_type == TaskType.REASONING:
@@ -402,7 +406,7 @@ class LMStudioClient:
         # Auto-activate Vision mode if image present
         if has_image:
             thinking_mode = ThinkingMode.VISION
-            print("👁️ Vision mode auto-activated (image detected)")
+            log.lm("👁️ Vision mode auto-activated (image detected)")
         
         # Get mode configuration
         mode_config = self.get_mode_config(thinking_mode)
@@ -520,14 +524,15 @@ class LMStudioClient:
         open_pattern = re.compile(r'<(think|thinking|reasoning|reflection)>', re.IGNORECASE)
         
         model = params.get("model", "unknown")
-        print(f">>> LM: Starting stream for model={model}", flush=True)
+        # log.lm_stream_start(model) is called by logger internally via events? 
+        # Actually log.lm_stream_start is a method of Logger. 
+        # The original code had print then log calls. We unify.
+        log.lm(f"Starting stream for model={model}")
         log.lm_stream_start(model)
         
         try:
-            print(">>> LM: Creating chat completion...", flush=True)
             log.lm("Creating chat completion...", model=model)
             stream = await self.client.chat.completions.create(**params)
-            print(">>> LM: Stream connection established!", flush=True)
             log.lm("Stream connection established ✓")
             
             async for chunk in stream:

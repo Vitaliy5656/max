@@ -22,6 +22,10 @@ except ImportError:
         from ddgs import DDGS
     except ImportError:
         DDGS = None
+        # Don't import log here to avoid issues at module level if circular, 
+        # but print is robust for warning on import fail. 
+        # Let's import inside the except block to be safe or use print as fallback? 
+        # Actually logger.py is safe.
         print("Warning: DuckDuckGo search not available. Install: pip install duckduckgo-search")
 
 
@@ -94,8 +98,10 @@ class WebSearcher:
             self._cache[cache_key] = search_results
             return search_results
             
+            
         except Exception as e:
-            print(f"Search error: {e}")
+            from .logger import log
+            log.error(f"Search error: {e}")
             return []
     
     async def read_page(

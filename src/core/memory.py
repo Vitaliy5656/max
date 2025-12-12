@@ -37,7 +37,8 @@ def _log_task_exception(task: asyncio.Task):
     try:
         exc = task.exception()
         if exc:
-            print(f"Background task error: {exc}")
+            from .logger import log
+            log.error(f"Background task error: {exc}")
     except asyncio.CancelledError:
         pass
 
@@ -116,7 +117,8 @@ class MemoryManager:
                 try:
                     await self._db.execute(statement)
                 except Exception as e:
-                    print(f"Schema warning: {e}")
+                    from .logger import log
+                    log.warn(f"Schema warning: {e}")
             await self._db.commit()
             
     async def close(self):
@@ -446,8 +448,10 @@ class MemoryManager:
             await self._db.commit()
             
             return summary
+            return summary
         except Exception as e:
-            print(f"Summarization error: {e}")
+            from .logger import log
+            log.error(f"Summarization error: {e}")
             return ""
     
     # ==================== Facts Database ====================
@@ -500,7 +504,8 @@ class MemoryManager:
                         # P1 fix: Specific exception instead of bare except
                         continue
         except Exception as e:
-            print(f"Fact extraction error: {e}")
+            # log is already imported in this method
+            log.error(f"Fact extraction error: {e}")
     
     async def add_fact(
         self, 

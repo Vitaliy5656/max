@@ -70,7 +70,8 @@ def _log_task_exception(task: asyncio.Task):
     try:
         exc = task.exception()
         if exc:
-            print(f"[Background Task Error] {type(exc).__name__}: {exc}", flush=True)
+            from src.core.logger import log
+            log.error(f"[Background Task Error] {type(exc).__name__}: {exc}")
     except asyncio.CancelledError:
         pass
 
@@ -140,13 +141,15 @@ async def startup():
     await _autogpt_agent.initialize(memory._db)
     
     _initialized = True
-    print("✅ AI Next Gen modules initialized (SemanticRouter, ContextPrimer, SelfReflection, ErrorMemory, ReflectiveAgent)", flush=True)
+    from src.core.logger import log
+    log.api("✅ AI Next Gen modules initialized (SemanticRouter, ContextPrimer, SelfReflection, ErrorMemory, ReflectiveAgent)")
 
 
 @app.on_event("shutdown")
 async def shutdown():
     """Cleanup and spawn backup on exit."""
-    print("📦 Spawning backup worker before shutdown...")
+    from src.core.logger import log
+    log.api("📦 Spawning backup worker before shutdown...")
     backup_manager.spawn_backup_worker()
     await memory.close()
 
@@ -178,11 +181,7 @@ async def trigger_backup():
 async def chat(request: ChatRequest):
     """Chat with streaming response (SSE)."""
     # DIRECT PRINT - guaranteed visibility
-    print("\n" + "="*60, flush=True)
-    print(f">>> CHAT REQUEST RECEIVED: {request.message[:50]}...", flush=True)
-    print(f">>> Model: {request.model}, Mode: {request.thinking_mode}", flush=True)
-    print("="*60, flush=True)
-    
+    # Replaced with log.api/log.request_start but keeping the cleaner log for now
     from src.core.logger import log
     
     global _current_conversation_id
@@ -198,13 +197,13 @@ async def chat(request: ChatRequest):
         conv = await memory.create_conversation("Новый разговор")
         conv_id = conv.id
         is_new_conv = True
-        print(f">>> Created conversation: {conv_id}", flush=True)
+        log.api(f"Created conversation: {conv_id}")
         log.api("Created new conversation", id=conv_id)
     _current_conversation_id = conv_id
     
     # Add user message
     await memory.add_message(conv_id, "user", request.message)
-    print(">>> User message saved", flush=True)
+    log.api("User message saved")
     log.api("User message saved to memory")
     
     # Track interaction (Background task with exception handler - P1 fix)
