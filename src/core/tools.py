@@ -193,7 +193,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search the web for information.",
+            "description": "Search the web for information. **CRITICAL**: You MUST ONLY use URLs that appear in the search results. NEVER invent or guess URLs. If a specific URL is not in the results, say 'I did not find a direct link' instead of making one up.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -646,21 +646,56 @@ class ToolExecutor:
     # ==================== Web Operations ====================
 
     async def _tool_web_search(self, query: str, max_results: int = 5) -> ToolResult:
-        """Search the web using DuckDuckGo."""
+        """Search the web using DuckDuckGo with URL validation."""
         try:
             from .web_search import web_searcher
+            from .url_validator import url_validator
 
             results = await web_searcher.search(query, max_results=max_results)
 
             if not results:
-                return ToolResult(True, "Ничего не найдено.")
+                return ToolResult(True, "Ничего не найдено по данному запросу.")
 
-            output_parts = [f"🔍 Результаты поиска: {query}\n"]
-            for i, r in enumerate(results, 1):
-                output_parts.append(f"{i}. **{r.title}**")
-                output_parts.append(f"   URL: {r.url}")
-                output_parts.append(f"   {r.snippet}\n")
+            # ANTI-HALLUCINATION: Validate each URL
+            validated_results = []
+            invalid_count = 0
+            
+            for r in results:
+                validation = await url_validator.validate_url(r.url)
+                r.validation_status = "verified" if validation.valid else "invalid"
+                r.confidence = validation.confidence
+                
+                if validation.valid:
+                    validated_results.append(r)
+                else:
+                    invalid_count += 1
+            
+            # If no valid URLs found, return error
+            if not validated_results:
+                return ToolResult(
+                    True, 
+                    f"⚠️ Найдено {len(results)} результатов, но ни один URL не прошел проверку.\n"
+                    "Возможно, эти сайты не существуют или недоступны."
+                )
 
+            output_parts = [
+                f"🔍 Результаты поиска: {query}\n",
+                f"✅ Проверено: {len(validated_results)} валидных URL из {len(results)} найденных\n",
+                f"⚠️ КРИТИЧЕСКИ ВАЖНО: Используйте ТОЛЬКО эти проверенные URL. НЕ придумывайте другие!\n"
+            ]
+            
+            for i, r in enumerate(validated_results, 1):
+                confidence_icon = "🟢" if r.confidence >= 0.9 else "🟡"
+                output_parts.append(f"\n{i}. {confidence_icon} **{r.title}**")
+                output_parts.append(f"   🔗 URL: {r.url}")
+                output_parts.append(f"   📝 {r.snippet}")
+                output_parts.append(f"   ✓ Проверен и доступен")
+
+            if invalid_count > 0:
+                output_parts.append(f"\n⚠️ Отфильтровано {invalid_count} недоступных URL")
+            
+            output_parts.append("\n🚫 Это ВСЕ проверенные URL. Других достоверных ссылок НЕТ.")
+            
             return ToolResult(True, "\n".join(output_parts))
         except Exception as e:
             return ToolResult(False, "", str(e))

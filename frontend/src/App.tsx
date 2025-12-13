@@ -118,6 +118,8 @@ export default function App() {
 
   // Thinking Mode State
   const [thinkingMode, setThinkingMode] = useState<'fast' | 'standard' | 'deep'>('standard');
+  // Model Selection Mode State (MANUAL/AUTO)
+  const [modelSelectionMode, setModelSelectionMode] = useState<'manual' | 'auto'>('manual');
   // Future: Image upload will set hasImage for vision mode (feature in backlog)
 
   // Thinking Modes Configuration
@@ -267,6 +269,18 @@ export default function App() {
         }
       } catch {
         // Keep defaults if model fetch fails
+      }
+
+      // Fetch current model selection mode from backend
+      try {
+        const response = await fetch('http://localhost:8000/api/config/model_selection_mode');
+        if (response.ok) {
+          const data = await response.json();
+          setModelSelectionMode(data.mode as 'manual' | 'auto');
+          addLog(`Режим выбора модели: ${data.mode === 'manual' ? 'РУЧНОЙ' : 'АВТО'}`, 'info');
+        }
+      } catch {
+        // Keep default 'manual' mode
       }
 
       await loadMetrics();
@@ -867,22 +881,74 @@ export default function App() {
 
           {/* Thinking Mode Selector */}
           {activeTab === 'chat' && (
-            <div className="flex items-center gap-1 bg-zinc-800/50 rounded-full p-1">
-              {thinkingModes.map(mode => (
-                <button
-                  key={mode.id}
-                  onClick={() => { setThinkingMode(mode.id); addLog(`Режим: ${mode.label}`, 'info'); }}
-                  className={`px-3 py-1 rounded-full text-sm transition-all duration-200 flex items-center gap-1
-                    ${thinkingMode === mode.id
-                      ? `${mode.bgActive} ${mode.color} font-medium`
+            <div className="flex items-center gap-3">
+              {/* Thinking Modes */}
+              <div className="flex items-center gap-1 bg-zinc-800/50 rounded-full p-1">
+                {thinkingModes.map(mode => (
+                  <button
+                    key={mode.id}
+                    onClick={() => { setThinkingMode(mode.id); addLog(`Режим: ${mode.label}`, 'info'); }}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${thinkingMode === mode.id
+                      ? `${mode.bgActive} ${mode.color} shadow-md`
                       : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50'}`}
-                  title={mode.label}
+                    title={mode.label}
+                  >
+                    <span>{mode.icon}</span>
+                    <span className="hidden md:inline">{mode.label}</span>
+                  </button>
+                ))}
+                {/* Vision badge will show when image upload is implemented */}
+              </div>
+
+              {/* Model Selection Mode Toggle */}
+              <div className="flex items-center gap-1 bg-zinc-800/50 rounded-full p-1 border border-white/5">
+                <button
+                  onClick={async () => {
+                    setModelSelectionMode('manual');
+                    addLog('🎯 Режим: РУЧНОЙ (модель не меняется)', 'info');
+                    // Sync with backend
+                    try {
+                      await fetch('http://localhost:8000/api/config/model_selection_mode', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ mode: 'manual' })
+                      });
+                    } catch (error) {
+                      console.error('Failed to update mode:', error);
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 ${modelSelectionMode === 'manual'
+                    ? 'bg-emerald-500/20 text-emerald-400 shadow-md'
+                    : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50'}`}
+                  title="Ручной режим: модель не меняется при переключении thinking modes"
                 >
-                  <span>{mode.icon}</span>
-                  <span className="hidden md:inline">{mode.label}</span>
+                  <span>🎯</span>
+                  <span className="hidden lg:inline">Ручной</span>
                 </button>
-              ))}
-              {/* Vision badge will show when image upload is implemented */}
+                <button
+                  onClick={async () => {
+                    setModelSelectionMode('auto');
+                    addLog('🧠 Режим: АВТО (модель выбирается автоматически)', 'info');
+                    // Sync with backend  
+                    try {
+                      await fetch('http://localhost:8000/api/config/model_selection_mode', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ mode: 'auto' })
+                      });
+                    } catch (error) {
+                      console.error('Failed to update mode:', error);
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 ${modelSelectionMode === 'auto'
+                    ? 'bg-indigo-500/20 text-indigo-400 shadow-md'
+                    : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50'}`}
+                  title="Авто режим: thinking modes автоматически выбирают оптимальную модель"
+                >
+                  <span>🧠</span>
+                  <span className="hidden lg:inline">Авто</span>
+                </button>
+              </div>
             </div>
           )}
 
@@ -946,67 +1012,104 @@ export default function App() {
 
           {/* CHAT VIEW */}
           {activeTab === 'chat' && (
-            <div className="h-full flex flex-col max-w-4xl mx-auto w-full relative">
+            <div className="h-full flex flex-col max-w-5xl mx-auto w-full relative">
               <div className="flex-1 overflow-y-auto px-4 py-6">
-                <div className="space-y-8 pb-4">
+                <div className="space-y-4 pb-4">
                   {messages.map((msg) => (
-                    <div key={msg.id} className={`flex gap-4 md:gap-6 ${msg.role === 'user' ? 'flex-row-reverse' : ''} group`}>
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-1 shadow-lg ${msg.role === 'user' ? 'bg-zinc-800 text-zinc-400' : 'bg-gradient-to-br from-indigo-600 to-violet-700 text-white'
-                        }`}>
-                        {msg.role === 'user' ? <span className="text-xs font-bold">VM</span> : <Cpu size={16} />}
-                      </div>
-                      <div className={`flex flex-col max-w-[85%] md:max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                        <div className="flex items-center gap-2 mb-1 opacity-0 group-hover:opacity-100 transition-opacity select-none">
-                          <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">{msg.role === 'user' ? 'You' : 'Max AI'}</span>
-                          <span className="text-[10px] text-zinc-600">•</span>
-                          <span className="text-[10px] text-zinc-600">{msg.timestamp}</span>
+                    <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      {/* Avatar - only for assistant */}
+                      {msg.role !== 'user' && (
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1 
+                                      bg-gradient-to-br from-indigo-600 to-violet-700 shadow-lg shadow-indigo-500/30">
+                          <Cpu size={16} className="text-white" />
                         </div>
-                        <div className={`prose prose-invert max-w-none text-sm leading-7 ${msg.role === 'user' ? 'text-zinc-100 text-right' : 'text-zinc-300'}`}>
-                          {/* P3 Fix: Show More for long messages (DATA GAP #3) */}
-                          {msg.content.length > 500 ? (
-                            <details>
-                              <summary className="cursor-pointer hover:text-zinc-100 list-none">
-                                {msg.content.slice(0, 500).split('\n').map((line, i) => (
-                                  <p key={i} className="mb-1 min-h-[1.5em] inline">{line || <br />}{i < msg.content.slice(0, 500).split('\n').length - 1 ? ' ' : ''}</p>
-                                ))}
-                                <span className="text-indigo-400 text-xs ml-1">... [Показать ещё {msg.content.length - 500} символов]</span>
-                              </summary>
-                              <div className="mt-2">
-                                {msg.content.split('\n').map((line, i) => (
-                                  <p key={i} className="mb-1 min-h-[1.5em]">{line || <br />}</p>
-                                ))}
-                              </div>
-                            </details>
-                          ) : (
-                            msg.content.split('\n').map((line, i) => (
-                              <p key={i} className="mb-1 min-h-[1.5em]">{line || <br />}</p>
-                            ))
+                      )}
+
+                      <div className={`flex flex-col max-w-[75%] md:max-w-[70%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                        {/* Message bubble */}
+                        <div className={`
+                          px-5 py-3.5 rounded-2xl shadow-lg
+                          ${msg.role === 'user'
+                            ? 'bg-gradient-to-br from-indigo-600 to-indigo-500 text-white rounded-tr-md'
+                            : 'bg-zinc-800/80 backdrop-blur-sm border border-zinc-700/50 text-zinc-100 rounded-tl-md'
+                          }
+                        `}>
+                          <div className={`text-[15px] leading-relaxed ${msg.role === 'user' ? 'text-white' : 'text-zinc-100'}`}>
+                            {msg.content.length > 500 ? (
+                              <details>
+                                <summary className="cursor-pointer hover:opacity-80 list-none">
+                                  {msg.content.slice(0, 500).split('\n').map((line, i) => (
+                                    <p key={i} className="mb-2 last:mb-0">{line || <br />}</p>
+                                  ))}
+                                  <span className="text-indigo-300 text-sm font-medium ml-1">
+                                    ... [Показать ещё {msg.content.length - 500} символов]
+                                  </span>
+                                </summary>
+                                <div className="mt-3 pt-3 border-t border-white/10">
+                                  {msg.content.split('\n').map((line, i) => (
+                                    <p key={i} className="mb-2 last:mb-0">{line || <br />}</p>
+                                  ))}
+                                </div>
+                              </details>
+                            ) : (
+                              msg.content.split('\n').map((line, i) => (
+                                <p key={i} className="mb-2 last:mb-0">{line || <br />}</p>
+                              ))
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Metadata row */}
+                        <div className="flex items-center gap-2 mt-1.5 px-2">
+                          <span className="text-[11px] text-zinc-500">{msg.timestamp}</span>
+                          {msg.model && msg.role === 'assistant' && (
+                            <>
+                              <span className="text-[11px] text-zinc-700">•</span>
+                              <span className="text-[11px] text-zinc-600">{msg.model}</span>
+                            </>
                           )}
                         </div>
+
+                        {/* Action buttons - only for assistant */}
                         {msg.role === 'assistant' && msg.content && (
-                          <div className="flex items-center gap-1 mt-2.5 -ml-1.5">
+                          <div className="flex items-center gap-1 mt-2 -ml-1">
                             <ActionBtn icon={<Copy size={14} />} onClick={() => handleCopy(msg.content)} label="Копировать" />
                             <ActionBtn icon={<RotateCw size={14} />} onClick={() => handleRegenerate(msg.id)} label="Перегенерировать" />
-                            <div className="h-3 w-[1px] bg-white/10 mx-1" />
+                            <div className="h-3 w-[1px] bg-zinc-700 mx-1" />
                             <button
                               onClick={() => handleFeedback(msg.id, 1)}
                               aria-label="Нравится"
-                              className={`p-1.5 rounded-md transition-colors active:scale-90 ${feedbackSent[msg.id] === 'up' ? 'text-emerald-400 bg-emerald-500/20' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                              className={`p-1.5 rounded-md transition-all duration-200 active:scale-90 ${feedbackSent[msg.id] === 'up'
+                                  ? 'text-emerald-400 bg-emerald-500/20'
+                                  : 'text-zinc-500 hover:text-emerald-400 hover:bg-zinc-800'
+                                }`}
                             >
                               {feedbackSent[msg.id] === 'up' ? <Check size={14} /> : <ThumbsUp size={14} />}
                             </button>
                             <button
                               onClick={() => handleFeedback(msg.id, -1)}
                               aria-label="Не нравится"
-                              className={`p-1.5 rounded-md transition-colors active:scale-90 ${feedbackSent[msg.id] === 'down' ? 'text-red-400 bg-red-500/20' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                              className={`p-1.5 rounded-md transition-all duration-200 active:scale-90 ${feedbackSent[msg.id] === 'down'
+                                  ? 'text-red-400 bg-red-500/20'
+                                  : 'text-zinc-500 hover:text-red-400 hover:bg-zinc-800'
+                                }`}
                             >
                               {feedbackSent[msg.id] === 'down' ? <Check size={14} /> : <ThumbsDown size={14} />}
                             </button>
                           </div>
                         )}
                       </div>
+
+                      {/* Avatar - only for user */}
+                      {msg.role === 'user' && (
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1 
+                                      bg-zinc-800 border border-zinc-700 shadow-lg">
+                          <span className="text-xs font-bold text-zinc-400">VM</span>
+                        </div>
+                      )}
                     </div>
                   ))}
+
                   {/* Show thinking indicator when model is thinking (reasoning) */}
                   {isThinking && (
                     <div className="pl-12 md:pl-14"><ThinkingIndicator /></div>

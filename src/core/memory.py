@@ -98,6 +98,7 @@ class MemoryManager:
         self.db_path = db_path or config.db_path
         self._db: Optional[aiosqlite.Connection] = None
         self._encoder = None  # Lazy loaded
+        self._pending_tasks: set[asyncio.Task] = set()  # Track background fact extraction
         
     async def initialize(self):
         """Initialize database connection and create tables."""
@@ -122,7 +123,12 @@ class MemoryManager:
             await self._db.commit()
             
     async def close(self):
-        """Close database connection."""
+        """Close database connection after waiting for pending tasks."""
+        if self._pending_tasks:
+            from .logger import log
+            log.api(f"⏳ Waiting for {len(self._pending_tasks)} pending extraction tasks...")
+            await asyncio.gather(*self._pending_tasks, return_exceptions=True)
+        
         if self._db:
             await self._db.close()
             
@@ -234,6 +240,8 @@ class MemoryManager:
         # Extract facts from user messages (with error logging)
         if role == "user" and config.memory.extract_facts:
             task = asyncio.create_task(self._extract_facts(cursor.lastrowid, content))
+            self._pending_tasks.add(task)
+            task.add_done_callback(lambda t: self._pending_tasks.discard(t))
             task.add_done_callback(_log_task_exception)
         
         return Message(
@@ -457,55 +465,146 @@ class MemoryManager:
     # ==================== Facts Database ====================
     
     async def _extract_facts(self, message_id: int, content: str):
-        """Extract facts from user message using LLM."""
-        # P1 Fix: Lower threshold from 20 to 10 to catch "My name is Max"
+        """
+        Extract facts from user message using LM Studio JSON mode with GBNF grammar.
+        
+        Uses response_format with JSON Schema to guarantee valid structured output
+        via server-side token constraint (no parsing required).
+        """
         if len(content) < 10:  # Too short to contain facts
             return
         
-        # We need to import log locally to avoid circular imports if any, or check top level
-        # Assuming we can't easily add top-level import without mess, let's use print for now or safe import
         from .logger import log
-        log.debug(f"Extracting facts from message {message_id} (len={len(content)})")
+        log.api(f"🔍 FACT EXTRACTION STARTED for message {message_id}: '{content[:100]}...'")
         
-        extract_prompt = f"""Проанализируй сообщение и извлеки ключевые факты о пользователе (если есть).
-Факты могут быть о: имени, работе, интересах, предпочтениях, проектах.
-Если фактов нет - напиши "НЕТ".
-Если есть - напиши каждый факт на новой строке, начиная с категории в скобках.
-
-Сообщение: {content}
-
-Формат ответа:
-(personal) Пользователя зовут Иван
-(project) Работает над приложением для трекинга
-(preference) Предпочитает краткие ответы
-
-Факты:"""
-
         try:
-            response = await lm_client.chat(
+            import json
+            
+            # Define JSON Schema for structured fact extraction
+            json_schema = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "extracted_facts",
+                    "strict": True,  # Enable GBNF grammar enforcement
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "personal_facts": {
+                                "type": "array",
+                                "description": "Personal information: name, age, location, family, etc.",
+                                "items": {"type": "string"}
+                            },
+                            "preference_facts": {
+                                "type": "array",
+                                "description": "Interests, hobbies, likes, dislikes, favorites",
+                                "items": {"type": "string"}
+                            },
+                            "project_facts": {
+                                "type": "array",
+                                "description": "Work, profession, current projects, skills",
+                                "items": {"type": "string"}
+                            }
+                        },
+                        "required": ["personal_facts", "preference_facts", "project_facts"],
+                        "additionalProperties": False
+                    }
+                }
+            }
+            
+            # Craft extraction prompt
+            extract_prompt = f"""Extract ALL facts about the user from their message.
+
+USER MESSAGE: "{content}"
+
+Instructions:
+- Extract ANY personal information (name, age, location, family)
+- Extract ALL preferences (hobbies, interests, likes, dislikes)
+- Extract ALL work/project information (profession, current work, skills)
+- If a category has no facts, return empty array
+- Be thorough and extract EVERYTHING relevant
+
+Respond with valid JSON matching the schema."""
+
+            # Call LM Studio with JSON Schema enforcement
+            response = await lm_client.client.chat.completions.create(
+                model="Phi-3.5-mini-instruct.IQ1_S.gguf",
                 messages=[{"role": "user", "content": extract_prompt}],
-                stream=False,
-                max_tokens=200
+                response_format=json_schema,  # GBNF grammar enforcement
+                temperature=0.1,  # Low temperature for consistent extraction
+                max_tokens=400  # Enough for multiple facts
             )
             
-            if "НЕТ" in response.upper():
-                return
+            # Parse guaranteed-valid JSON
+            facts_data = json.loads(response.choices[0].message.content)
             
-            # Parse facts
-            for line in response.strip().split('\n'):
-                line = line.strip()
-                if line.startswith('('):
-                    try:
-                        category = line[1:line.index(')')]
-                        fact_content = line[line.index(')')+1:].strip()
-                        if fact_content:
-                            await self.add_fact(fact_content, category, message_id)
-                    except (ValueError, IndexError):
-                        # P1 fix: Specific exception instead of bare except
-                        continue
+            log.api(f"📝 Extracted JSON: {json.dumps(facts_data, ensure_ascii=False)[:200]}...")
+            
+            # Save extracted facts to database
+            facts_added = 0
+            
+            for fact in facts_data.get("personal_facts", []):
+                if fact and len(fact.strip()) > 3:
+                    await self.add_fact(fact.strip(), "personal", message_id)
+                    log.api(f"💾 Personal fact saved: {fact}")
+                    facts_added += 1
+            
+            for fact in facts_data.get("preference_facts", []):
+                if fact and len(fact.strip()) > 3:
+                    await self.add_fact(fact.strip(), "preference", message_id)
+                    log.api(f"💾 Preference fact saved: {fact}")
+                    facts_added += 1
+            
+            for fact in facts_data.get("project_facts", []):
+                if fact and len(fact.strip()) > 3:
+                    await self.add_fact(fact.strip(), "project", message_id)
+                    log.api(f"💾 Project fact saved: {fact}")
+                    facts_added += 1
+            
+            if facts_added > 0:
+                log.api(f"✨ УСПЕХ: {facts_added} факт(ов) извлечено и сохранено (message {message_id})")
+            else:
+                log.api(f"📭 Фактов не обнаружено в сообщении {message_id}")
+                
+        except json.JSONDecodeError as e:
+            log.error(f"❌ JSON parsing failed (should never happen with schema): {e}")
+            log.error(f"   Response was: {response.choices[0].message.content[:200]}")
         except Exception as e:
-            # log is already imported in this method
-            log.error(f"Fact extraction error: {e}")
+            log.error(f"❌ Fact extraction error: {e}")
+            import traceback
+            log.error(traceback.format_exc())
+    
+    async def _extract_with_model(self, prompt: str, max_tokens: int = 200) -> str:
+        """
+        Call extraction model via LM Studio API.
+        
+        Simple approach: just call the model through API.
+        LM Studio will handle loading if needed.
+        """
+        from .logger import log
+        
+        extraction_model = "Phi-3.5-mini-instruct.IQ1_S.gguf"  # Exact model name in LM Studio
+        
+        try:
+            log.debug(f"🤖 Calling extraction model: {extraction_model}")
+            
+            # Direct API call - let LM Studio handle the model
+            response = await lm_client.client.chat.completions.create(
+                model=extraction_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_tokens,
+                temperature=0.1,
+                stream=False
+            )
+            
+            content = response.choices[0].message.content or ""
+            log.debug(f"✅ Extraction complete ({len(content)} chars)")
+            
+            return content
+            
+        except Exception as e:
+            log.error(f"Extraction failed: {e}")
+            log.warn("Make sure Phi-3.5-mini-instruct.IQ1_S.gguf is available in LM Studio")
+            return ""
     
     async def add_fact(
         self, 
@@ -514,39 +613,76 @@ class MemoryManager:
         source_message_id: Optional[int] = None
     ) -> Fact:
         """Add a fact to long-term memory."""
-        # Logic Fix: Deduplication
-        # Check if identical fact exists
-        async with self._db.execute(
-            "SELECT * FROM memory_facts WHERE content = ? LIMIT 1",
-            (content,)
-        ) as cursor:
-            existing = await cursor.fetchone()
-            if existing:
-                return Fact(
-                    id=existing["id"],
-                    content=existing["content"],
-                    category=existing["category"],
-                    confidence=existing["confidence"],
-                    created_at=existing["created_at"]
-                )
+        from .logger import log
+        
+        try:
+            log.debug(f"💾 Attempting to save fact: [{category}] {content[:50]}...")
+            
+            # Logic Fix: Deduplication
+            async with self._db.execute(
+                "SELECT * FROM memory_facts WHERE content = ? LIMIT 1",
+                (content,)
+            ) as cursor:
+                existing = await cursor.fetchone()
+                if existing:
+                    log.debug(f"⚠️ Fact already exists (ID: {existing['id']})")
+                    return Fact(
+                        id=existing["id"],
+                        content=existing["content"],
+                        category=existing["category"],
+                        embedding=json.loads(existing["embedding"].decode()) if existing["embedding"] else None
+                    )
 
-        # Get embedding for semantic search
-        embedding = await lm_client.get_embedding(content)
-        embedding_blob = json.dumps(embedding).encode() if embedding else None
+            # Get embedding for semantic search (optional - fallback works without)
+            log.debug("🔢 Generating embedding...")
+            try:
+                embedding = await lm_client.get_embedding(content)
+                if not embedding or len(embedding) == 0:
+                    log.warn(f"⚠️ Embedding empty (LM Studio embedding model not loaded) - saving without embedding")
+                    log.warn(f"   Fact will still work via fallback search")
+                    embedding = None
+                else:
+                    log.debug(f"✅ Embedding generated: {len(embedding)} dimensions")
+            except Exception as e:
+                log.debug(f"Embedding generation skipped: {e}")
+                embedding = None
+            
+            embedding_blob = json.dumps(embedding).encode() if embedding else None
+            
+            # Save to database
+            log.debug("💿 Writing to database...")
+            cursor = await self._db.execute(
+                """INSERT INTO memory_facts (content, category, embedding, source_message_id)
+                   VALUES (?, ?, ?, ?)""",
+                (content, category, embedding_blob, source_message_id)
+            )
+            await self._db.commit()
+            
+            fact_id = cursor.lastrowid
+            
+            # Verify persistence
+            async with self._db.execute(
+                "SELECT id FROM memory_facts WHERE id = ?", (fact_id,)
+            ) as verify_cursor:
+                verified = await verify_cursor.fetchone()
+                if not verified:
+                    log.error(f"❌ CRITICAL: Fact {fact_id} not found after commit!")
+                else:
+                    log.api(f"✅ FACT SAVED TO DATABASE (ID: {fact_id})")
+            
+            return Fact(
+                id=fact_id,
+                content=content,
+                category=category,
+                embedding=embedding
+            )
         
-        cursor = await self._db.execute(
-            """INSERT INTO memory_facts (content, category, embedding, source_message_id)
-               VALUES (?, ?, ?, ?)""",
-            (content, category, embedding_blob, source_message_id)
-        )
-        await self._db.commit()
-        
-        return Fact(
-            id=cursor.lastrowid,
-            content=content,
-            category=category,
-            embedding=embedding
-        )
+        except Exception as e:
+            log.error(f"❌ FAILED TO SAVE FACT: {e}")
+            import traceback
+            log.error(traceback.format_exc())
+            # Return dummy to avoid crashing extraction
+            return Fact(id=-1, content=content, category=category, embedding=None)
     
     async def get_relevant_facts(
         self,
@@ -589,10 +725,12 @@ class MemoryManager:
             scored_facts.sort(key=lambda x: x[1], reverse=True)
             rows = [sf[0] for sf in scored_facts[:limit * 2]]  # Get more for token filtering
         else:
-            # Fallback to recent facts
+            # Fallback: get ALL facts (no embedding-based filtering)
+            from .logger import log
+            log.warn("⚠️ No embeddings available for semantic search, using fallback")
             async with self._db.execute(
                 """SELECT * FROM memory_facts
-                   ORDER BY last_accessed DESC NULLS LAST, created_at DESC
+                   ORDER BY created_at DESC
                    LIMIT ?""",
                 (limit * 2,)
             ) as cursor:
@@ -608,8 +746,7 @@ class MemoryManager:
                 id=row["id"],
                 content=row["content"],
                 category=row["category"],
-                confidence=row["confidence"],
-                created_at=row["created_at"]
+                embedding=json.loads(row["embedding"].decode()) if row["embedding"] else None
             )
             fact_tokens = self.count_tokens(fact.content)
             if tokens + fact_tokens > max_tokens:

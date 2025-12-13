@@ -54,3 +54,10 @@ htmlcov/
 *.bak
 *.tmp
 *.temp
+
+# Models
+Phi-3.5-mini-instruct-GGUF/
+*.gguf
+
+# Temp
+1.txt

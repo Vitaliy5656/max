@@ -39,6 +39,11 @@ class LMStudioConfig:
     # P2 Fix: Rate limiting (Concurrency)
     max_concurrent_requests: int = 5
     
+    # Model Selection Mode
+    # "manual": Thinking modes only change temperature/tokens, NOT model
+    # "auto": Thinking modes auto-select optimal model (old behavior)
+    model_selection_mode: str = "manual"
+    
     # Thinking Modes Configuration
     thinking_modes: dict = field(default_factory=lambda: {
         "fast": ThinkingModeConfig(
@@ -86,6 +91,8 @@ class MemoryConfig:
 
     # Facts extraction
     extract_facts: bool = True
+    # Model name as it appears in LM Studio (just call via API, assume it's available)
+    extraction_model: str = "Phi-3.5-mini-instruct.IQ1_S.gguf"
 
     # Cross-session search
     cross_session_top_k: int = 5

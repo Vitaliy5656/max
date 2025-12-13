@@ -19,6 +19,7 @@ from openai import AsyncOpenAI
 
 from .config import config
 from .safe_shell import safe_shell
+from .logger import log
 
 
 class TaskType(Enum):
@@ -411,13 +412,33 @@ class LMStudioClient:
         # Get mode configuration
         mode_config = self.get_mode_config(thinking_mode)
         
-        # Use mode settings if not explicitly overridden
-        if not model:
-            model = mode_config.model
-        if temperature is None:
-            temperature = mode_config.temperature
-        if max_tokens is None:
-            max_tokens = mode_config.max_tokens
+        # Model Selection Logic based on mode
+        if config.lm_studio.model_selection_mode == "manual":
+            # MANUAL MODE: Thinking modes do NOT change model
+            # Only apply temperature and token limits
+            if not model:
+                # No explicit model → use currently loaded or default
+                loaded = await self.get_loaded_model()
+                model = loaded if loaded else config.lm_studio.default_model
+                log.lm(f"🎯 MANUAL mode: using {'loaded' if loaded else 'default'} model: {model}")
+            else:
+                log.lm(f"🎯 MANUAL mode: explicit model selection: {model}")
+            
+            # Apply only thinking parameters (not model)
+            if temperature is None:
+                temperature = mode_config.temperature
+            if max_tokens is None:
+                max_tokens = mode_config.max_tokens
+        else:
+            # AUTO MODE: Thinking modes select optimal model (legacy behavior)
+            if not model:
+                model = mode_config.model
+                log.lm(f"🧠 AUTO mode: thinking mode selected model: {model}")
+            
+            if temperature is None:
+                temperature = mode_config.temperature
+            if max_tokens is None:
+                max_tokens = mode_config.max_tokens
         
         # Inject system prompt suffix for thinking mode (Chain-of-Thought)
         if mode_config.system_prompt_suffix:
@@ -540,7 +561,7 @@ class LMStudioClient:
                 
                 # Check for empty chunk
                 if not chunk.choices:
-                    log.stream(f"[#{chunk_count:03d}] Empty chunk (no choices)", level="DEBUG")
+                    # Silenced: Empty chunk log
                     continue
                 
                 delta = chunk.choices[0].delta
@@ -548,18 +569,18 @@ class LMStudioClient:
                     # Log finish reason if present
                     finish_reason = chunk.choices[0].finish_reason
                     if finish_reason:
-                        log.stream(f"[#{chunk_count:03d}] Finish signal", reason=finish_reason)
+                        pass  # Silenced: Finish signal log
                     continue
                     
                 content = delta.content
                 total_chars_received += len(content)
                 
-                # Log raw chunk received
-                preview = content.replace("\n", "\\n")[:40]
-                log.stream(f"[#{chunk_count:03d}] RAW CHUNK", 
-                          chars=len(content), 
-                          preview=f'"{preview}"',
-                          state="THINK" if in_think_block else "NORMAL")
+                # Silenced: Raw chunk logs to reduce spam
+                # preview = content.replace("\n", "\\n")[:40]
+                # log.stream(f"[#{chunk_count:03d}] RAW CHUNK", 
+                #           chars=len(content), 
+                #           preview=f'"{preview}"',
+                #           state="THINK" if in_think_block else "NORMAL")
                 
                 pending_buffer += content
                 
@@ -579,7 +600,7 @@ class LMStudioClient:
                             before_tag = pending_buffer[:match.start()]
                             if before_tag:
                                 total_chars_yielded += len(before_tag)
-                                log.stream(f"  → YIELD (before tag)", chars=len(before_tag))
+                                # Silenced: Yield log
                                 yield before_tag
                             
                             # Enter think mode
@@ -599,7 +620,7 @@ class LMStudioClient:
                                 to_yield = pending_buffer[:-1]
                                 if to_yield:
                                     total_chars_yielded += len(to_yield)
-                                    log.stream(f"  → YIELD (partial '<' held)", chars=len(to_yield))
+                                    # Silenced: Yield log
                                     yield to_yield
                                 pending_buffer = '<'
                                 break
@@ -618,9 +639,7 @@ class LMStudioClient:
                                     to_yield = pending_buffer[:last_lt]
                                     if to_yield:
                                         total_chars_yielded += len(to_yield)
-                                        log.stream(f"  → YIELD (partial tag held)", 
-                                                  chars=len(to_yield),
-                                                  held=f'"{potential}"')
+                                        # Silenced: Yield log
                                         yield to_yield
                                     pending_buffer = potential
                                     break
@@ -633,7 +652,7 @@ class LMStudioClient:
                             else:
                                 # No potential tags, yield all
                                 total_chars_yielded += len(pending_buffer)
-                                log.stream(f"  → YIELD (clean)", chars=len(pending_buffer))
+                                # Silenced: Yield log
                                 yield pending_buffer
                                 pending_buffer = ""
                     else:
@@ -668,8 +687,7 @@ class LMStudioClient:
                         else:
                             # Still in think block, accumulate
                             think_content += pending_buffer
-                            log.think(f"  Accumulating think content", 
-                                     total_think_chars=len(think_content))
+                            # Silenced: Think accumulation log
                             pending_buffer = ""
                             break
             
