@@ -166,11 +166,11 @@ class MemoryManager:
                 )
         return None
     
-    async def list_conversations(self, limit: int = 50) -> list[Conversation]:
-        """List recent conversations."""
+    async def list_conversations(self, limit: int = 50, offset: int = 0) -> list[Conversation]:
+        """List recent conversations with pagination."""
         async with self._db.execute(
-            "SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ?",
-            (limit,)
+            "SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            (limit, offset)
         ) as cursor:
             rows = await cursor.fetchall()
             return [
@@ -305,10 +305,16 @@ class MemoryManager:
         2. Include recent messages (up to limit)
         3. Include relevant facts
         4. Include cross-session relevant context
+        
+        IMPORTANT: All system content is consolidated into ONE system message
+        to satisfy strict message alternation requirements (System -> User -> Assistant -> ...)
         """
         max_tokens = max_tokens or config.memory.max_context_tokens
         context = []
         tokens_used = 0
+        
+        # Collect all system content parts
+        system_parts = []
         
         # 1. Get conversation summary
         async with self._db.execute(
@@ -321,27 +327,10 @@ class MemoryManager:
                 summary_msg = f"[Краткое содержание предыдущего разговора: {row['summary']}]"
                 tokens = self.count_tokens(summary_msg)
                 if tokens_used + tokens < max_tokens * config.memory.summary_token_ratio:
-                    context.append({"role": "system", "content": summary_msg})
+                    system_parts.append(summary_msg)
                     tokens_used += tokens
         
-        # 2. Get recent messages
-        messages = await self.get_messages(
-            conversation_id, 
-            limit=config.memory.max_session_messages
-        )
-        
-        # Add messages from newest to oldest until budget exhausted
-        messages_to_add = []
-        for msg in reversed(messages):
-            msg_tokens = msg.tokens_used or self.count_tokens(msg.content)
-            if tokens_used + msg_tokens > max_tokens * MESSAGES_TOKEN_RATIO:
-                break
-            messages_to_add.insert(0, {"role": msg.role, "content": msg.content})
-            tokens_used += msg_tokens
-        
-        context.extend(messages_to_add)
-        
-        # 3. Include relevant facts
+        # 2. Include relevant facts (add to system parts)
         if include_facts:
             facts = await self.get_relevant_facts(
                 conversation_id, 
@@ -352,7 +341,33 @@ class MemoryManager:
                 facts_text = "\n".join([f"• {f.content}" for f in facts])
                 facts_msg = f"[Известные факты о пользователе:\n{facts_text}]"
                 if tokens_used + self.count_tokens(facts_msg) < max_tokens:
-                    context.insert(0, {"role": "system", "content": facts_msg})
+                    system_parts.append(facts_msg)
+                    tokens_used += self.count_tokens(facts_msg)
+        
+        # 3. Build consolidated system message (ONE system message only)
+        if system_parts:
+            consolidated_system = "\n\n".join(system_parts)
+            context.append({"role": "system", "content": consolidated_system})
+        
+        # 4. Get recent messages (User/Assistant only, no system messages from history)
+        messages = await self.get_messages(
+            conversation_id, 
+            limit=config.memory.max_session_messages
+        )
+        
+        # Add messages from newest to oldest until budget exhausted
+        messages_to_add = []
+        for msg in reversed(messages):
+            # Skip system messages from history (they would break alternation)
+            if msg.role == "system":
+                continue
+            msg_tokens = msg.tokens_used or self.count_tokens(msg.content)
+            if tokens_used + msg_tokens > max_tokens * MESSAGES_TOKEN_RATIO:
+                break
+            messages_to_add.insert(0, {"role": msg.role, "content": msg.content})
+            tokens_used += msg_tokens
+        
+        context.extend(messages_to_add)
         
         return context
     
@@ -434,7 +449,31 @@ class MemoryManager:
             prefix = "User:" if msg.role == "user" else "Assistant:"
             text_parts.append(f"{prefix} {msg.content[:500]}")  # Truncate long messages
         
-        summarize_prompt = f"""Кратко суммируй основные темы и ключевые моменты этого разговора (2-3 предложения):
+        # P1 Fix: Recursive Summarization
+        # Retrieve previous summary to ensure we don't lose history
+        old_summary = ""
+        async with self._db.execute(
+            """SELECT summary FROM conversation_summaries 
+               WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1""",
+            (conversation_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row and row["summary"]:
+                old_summary = row["summary"]
+
+        if old_summary:
+            summarize_prompt = f"""У нас есть краткое содержание предыдущей части разговора:
+"{old_summary}"
+
+А вот новые сообщения:
+{chr(10).join(text_parts)}
+
+Задача: Обнови краткое содержание, объединив старое резюме и новую информацию.
+Итоговое резюме должно быть связным текстом (2-4 предложения), охватывающим ВЕСЬ разговор целиком.
+
+Новое резюме:"""
+        else:
+            summarize_prompt = f"""Кратко суммируй основные темы и ключевые моменты этого разговора (2-3 предложения):
 
 {chr(10).join(text_parts)}
 
@@ -444,7 +483,7 @@ class MemoryManager:
             summary = await lm_client.chat(
                 messages=[{"role": "user", "content": summarize_prompt}],
                 stream=False,
-                max_tokens=200
+                max_tokens=300 # Increased for combined summary
             )
             
             # Save summary
@@ -527,7 +566,7 @@ Respond with valid JSON matching the schema."""
 
             # Call LM Studio with JSON Schema enforcement
             response = await lm_client.client.chat.completions.create(
-                model="Phi-3.5-mini-instruct.IQ1_S.gguf",
+                model=config.memory.extraction_model,
                 messages=[{"role": "user", "content": extract_prompt}],
                 response_format=json_schema,  # GBNF grammar enforcement
                 temperature=0.1,  # Low temperature for consistent extraction
@@ -582,7 +621,7 @@ Respond with valid JSON matching the schema."""
         """
         from .logger import log
         
-        extraction_model = "Phi-3.5-mini-instruct.IQ1_S.gguf"  # Exact model name in LM Studio
+        extraction_model = config.memory.extraction_model
         
         try:
             log.debug(f"🤖 Calling extraction model: {extraction_model}")
@@ -603,7 +642,7 @@ Respond with valid JSON matching the schema."""
             
         except Exception as e:
             log.error(f"Extraction failed: {e}")
-            log.warn("Make sure Phi-3.5-mini-instruct.IQ1_S.gguf is available in LM Studio")
+            log.warn(f"Make sure {extraction_model} is available in LM Studio")
             return ""
     
     async def add_fact(

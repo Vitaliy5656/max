@@ -10,10 +10,14 @@ echo.
 
 cd /d "%~dp0"
 
-:: Kill old processes on ports 8000 and 5173
-echo Stopping old processes...
+:: Kill old processes strictly by window title first (cleanest)
+taskkill /F /FI "WINDOWTITLE eq MAX-API*" /T 2>nul
+taskkill /F /FI "WINDOWTITLE eq MAX-UI*" /T 2>nul
+:: Then by ports assurance
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8000 ^| findstr LISTENING') do taskkill /F /PID %%a 2>nul
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr :5173 ^| findstr LISTENING') do taskkill /F /PID %%a 2>nul
+:: Just in case, kill stray node processes (often hang)
+taskkill /F /IM node.exe 2>nul
 timeout /t 2 /nobreak > nul
 
 if not exist ".venv" (
@@ -37,7 +41,7 @@ echo.
 
 echo Starting API Server on port 8000...
 :: Use cmd /k to keep window open if it crashes, remove /min for visibility
-start "MAX-API" cmd /k "call .venv\Scripts\activate && python -m uvicorn src.api.api:app --host 0.0.0.0 --port 8000 --reload"
+start "MAX-API" cmd /k "call .venv\Scripts\activate && python -m uvicorn src.api.app:app --host 0.0.0.0 --port 8000 --reload"
 
 echo Starting React Frontend on port 5173...
 :: Explicitly use cmd /c for npm to avoid PowerShell policy issues

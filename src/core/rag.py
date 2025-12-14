@@ -87,6 +87,9 @@ class RAGEngine:
     async def add_document(self, file_path: str) -> Document:
         """
         Add and index a document.
+        
+        Copies the file to a persistent 'uploads' directory to ensure 
+        availability even if the original is a temporary file.
 
         Args:
             file_path: Path to document (PDF, DOCX, TXT, MD)
@@ -94,33 +97,51 @@ class RAGEngine:
         Returns:
             Document metadata with chunk count
         """
-        path = Path(file_path).expanduser().resolve()
+        source_path = Path(file_path).expanduser().resolve()
 
-        if not path.exists():
+        if not source_path.exists():
             raise FileNotFoundError(f"Document not found: {file_path}")
 
-        # Logic Fix: Deduplication
-        # Check if file with same name already exists
-        async with self._db.execute(
-            "SELECT id FROM documents WHERE filename = ? LIMIT 1",
-            (path.name,)
-        ) as cursor:
-            existing = await cursor.fetchone()
-            if existing:
-                return await self.get_document(existing["id"])
+        # P0 Fix: Ensure persistence. Copy file to data/uploads
+        # Use config.data_dir which should be available, or fallback
+        try:
+            data_dir = config.data_dir
+        except AttributeError:
+            data_dir = Path("data").resolve()
+            
+        upload_dir = data_dir / "uploads"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create unique filename to prevent collisions/overwrites
+        # pattern: {uuid}_{original_filename}
+        unique_name = f"{uuid.uuid4().hex[:8]}_{source_path.name}"
+        persistent_path = upload_dir / unique_name
+        
+        # Copy file to persistent location
+        import shutil
+        shutil.copy2(source_path, persistent_path)
+        
+        # Use persist path for all operations
+        path = persistent_path
 
+        # Logic Fix: Deduplication (check by original filename OR hash in future)
+        # For now, allow duplicate filenames but store as separate unique files
+        # If strict deduplication is needed, we should check content hash.
+        
         # Parse document
         content = await self._parse_document(path)
 
         if not content.strip():
+            # Clean up empty file
+            path.unlink(missing_ok=True)
             raise ValueError("Document is empty or couldn't be parsed")
 
         # Create document record
         doc_id = str(uuid.uuid4())
         doc = Document(
             id=doc_id,
-            filename=path.name,
-            file_path=str(path),
+            filename=source_path.name, # Keep original valid filename for display
+            file_path=str(path),       # Store internal persistent path
             file_type=path.suffix.lower()[1:],
             chunk_count=0
         )
@@ -164,6 +185,9 @@ class RAGEngine:
         except Exception as e:
             # Rollback on error
             await self._db.rollback()
+            # Cleanup orphaned file
+            if path.exists():
+                path.unlink()
             raise RuntimeError(f"Failed to add document: {e}") from e
     
     async def _parse_document(self, path: Path) -> str:

@@ -96,6 +96,12 @@ export interface ConfidenceEvent {
     factors: string[];
 }
 
+// Queue Status Event
+export interface QueueEvent {
+    status: 'waiting' | 'acquired';
+    position?: number;
+}
+
 // Chat
 export async function streamChat(
     message: string,
@@ -111,6 +117,7 @@ export async function streamChat(
     onThinking?: (event: ThinkingEvent) => void,   // Thinking callback
     onConfidence?: (event: ConfidenceEvent) => void,  // Confidence callback
     onLoading?: (event: { model: string }) => void,   // Issue #6: Loading state callback
+    onQueueStatus?: (event: QueueEvent) => void,      // NEW: Queue status callback
     abortSignal?: AbortSignal
 ): Promise<void> {
     const response = await fetch(`${API_BASE}/chat`, {
@@ -157,7 +164,26 @@ export async function streamChat(
             try {
                 const data = JSON.parse(trimmed.slice(6));
 
-                // Handle thinking events
+                // Handle meta events (Queue & Pulse)
+                if (data._meta) {
+                    if (data._meta === 'queue_heartbeat' && onQueueStatus) {
+                        onQueueStatus({ status: 'waiting' });
+                    } else if (data._meta === 'thinking_start' && onThinking) {
+                        onThinking({ status: 'start' });
+                    } else if (data._meta === 'thinking_end' && onThinking) {
+                        onThinking({
+                            status: 'end',
+                            duration_ms: data.duration_ms,
+                            chars_filtered: data.chars_filtered,
+                            think_content: data.think_content
+                        });
+                    }
+                    // 'pulse' is currently just a keep-alive, no UI action needed yet
+                    // except maybe resetting a connection timeout timer if we had one.
+                    return;
+                }
+
+                // Handle thinking events (Legacy/Direct format if backend sends it)
                 if (data.thinking && onThinking) {
                     onThinking({
                         status: data.thinking,

@@ -33,7 +33,9 @@ class Colors:
     THINK = "\033[38;5;141m"   # Purple
     ERROR = "\033[38;5;196m"   # Red
     WARN = "\033[38;5;226m"    # Yellow
+
     DEBUG = "\033[38;5;245m"   # Gray
+    PARALLEL = "\033[38;5;51m" # Cyan
 
 
 class Component(Enum):
@@ -43,6 +45,9 @@ class Component(Enum):
     THINK = "THINK"
     SSE = "SSE"
     FRONTEND = "FE"
+
+    COGNITIVE = "COGNITIVE"
+    PARALLEL = "PARALLEL"
 
 
 # Context variable for request tracing
@@ -97,6 +102,9 @@ class Logger:
             Component.THINK: Colors.THINK,
             Component.SSE: Colors.STREAM,
             Component.FRONTEND: Colors.API,
+
+            Component.COGNITIVE: "\033[38;5;213m", # Pink
+            Component.PARALLEL: Colors.PARALLEL,
         }
         
         level_colors = {
@@ -163,6 +171,14 @@ class Logger:
     def sse(self, message: str, **kwargs):
         """Log SSE events."""
         self._print(Component.SSE, message, **kwargs)
+
+    def cognitive(self, message: str, **kwargs):
+        """Log Cognitive Loop events (System 2)."""
+        self._print(Component.COGNITIVE, message, **kwargs)
+
+    def parallel(self, message: str, **kwargs):
+        """Log Parallel execution events."""
+        self._print(Component.PARALLEL, message, **kwargs)
     
     def error(self, message: str, **kwargs):
         """Log errors from any component."""

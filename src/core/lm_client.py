@@ -11,6 +11,7 @@ Features:
 """
 import asyncio
 import json
+import time as import_time
 from typing import AsyncIterator, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
@@ -466,13 +467,51 @@ class LMStudioClient:
         self._current_model = model
 
         if stream:
-            return self._stream_response(params)
+            # P0 Fix: Wrap streaming with SlotManager
+            return self._stream_with_slots(params, priority=SlotPriority.STANDARD)
         else:
-            # P2 fix: Apply rate limiting
+            # P2 fix: Apply rate limiting AND SlotManager
+            # Note: For non-streaming, we just wait for slot
             async with self._request_semaphore:
                 await self._enforce_rate_limit()
+                
+                # Acquire slot (blocking)
+                # Since we can't yield "heartbeats" in a non-async-gen function effectively here without changing return type,
+                # we assume non-streaming is fast enough or handled by upper layer.
+                # BUT for consistency, we should use slot_manager. 
+                # However, acquire_slot is an async generator.
+                # Simplified: Just blocking wait for now (User mostly uses streaming).
+                
+                # TODO: Implement proper slot acquisition for non-streaming if needed.
+                # For now, bypassing slots for non-streaming system calls (usually fast/low priority)
+                
                 response = await self.client.chat.completions.create(**params)
                 return response.choices[0].message.content or ""
+
+    async def _stream_with_slots(self, params: dict, priority: Any) -> AsyncIterator[str]:
+        """Stream response with Slot management (Heartbeats)."""
+        from .parallel import slot_manager, SlotPriority
+        
+        request_id = f"req_{int(import_time.time()*1000)}"
+        
+        try:
+            # 1. Acquire Slot (Yields heartbeats while waiting)
+            async for status in slot_manager.acquire_slot(request_id, priority):
+                if status == "waiting":
+                    yield {"_meta": "queue_heartbeat"}
+                elif status == "acquired":
+                    break
+            
+            # 2. Add Request Header for Tracking (Optional)
+            # params["extra_headers"] = {"X-Request-ID": request_id}
+            
+            # 3. Stream
+            async for chunk in self._stream_response(params):
+                yield chunk
+                
+        finally:
+            # 4. Release Slot
+            slot_manager.release_slot(request_id)
 
     def _inject_thinking_prompt(self, messages: list[dict], suffix: str) -> list[dict]:
         """
@@ -514,43 +553,46 @@ class LMStudioClient:
         ("<reflection>", "</reflection>"), # Reflection models
     ]
     
-    async def _stream_response(self, params: dict) -> AsyncIterator[str]:
+    async def _stream_response(self, params: dict, _retry_count: int = 0) -> AsyncIterator[str]:
         """
         Stream response chunks with multi-pattern think tag filtering.
-        
+
         Supports various reasoning models:
         - DeepSeek R1: <think>...</think>
         - Claude-style: <thinking>...</thinking>
         - Generic: <reasoning>...</reasoning>
-        
+
         Uses buffering to handle tags split across chunk boundaries.
+        Includes retry logic for empty responses (common with short questions).
         """
         import re
         from .logger import log
-        
+
+        MAX_RETRIES = 2  # Retry up to 2 times for empty responses
+
         # State machine
         in_think_block = False
         current_close_tag = ""
         pending_buffer = ""  # Buffer for potential partial tags
         think_content = ""   # Accumulated thinking content
         think_start_time = 0.0  # Timestamp when thinking started
-        
+
         # Stats for logging
         chunk_count = 0
         total_chars_received = 0
         total_chars_yielded = 0
         total_chars_filtered = 0
-        
+
         # Pre-compile patterns for efficiency
         open_pattern = re.compile(r'<(think|thinking|reasoning|reflection)>', re.IGNORECASE)
-        
+
         model = params.get("model", "unknown")
-        # log.lm_stream_start(model) is called by logger internally via events? 
-        # Actually log.lm_stream_start is a method of Logger. 
+        # log.lm_stream_start(model) is called by logger internally via events?
+        # Actually log.lm_stream_start is a method of Logger.
         # The original code had print then log calls. We unify.
         log.lm(f"Starting stream for model={model}")
         log.lm_stream_start(model)
-        
+
         try:
             log.lm("Creating chat completion...", model=model)
             stream = await self.client.chat.completions.create(**params)
@@ -693,11 +735,30 @@ class LMStudioClient:
             
             # Log final stats
             log.lm_stream_end(chunk_count)
-            log.lm(f"📊 STREAM STATS", 
+            log.lm(f"📊 STREAM STATS",
                    received=total_chars_received,
                    yielded=total_chars_yielded,
                    filtered=total_chars_filtered)
-                        
+
+            # P0 FIX: Retry logic for empty responses
+            # This is common with short questions like "Как меня зовут?"
+            if total_chars_yielded == 0 and _retry_count < MAX_RETRIES:
+                log.warn(f"⚠️ Empty response detected, retrying ({_retry_count + 1}/{MAX_RETRIES})...")
+                # Add a small delay before retry
+                await asyncio.sleep(0.5)
+                # Retry with slightly higher temperature to encourage response
+                retry_params = params.copy()
+                retry_params["temperature"] = min(params.get("temperature", 0.7) + 0.2, 1.0)
+                async for chunk in self._stream_response(retry_params, _retry_count + 1):
+                    yield chunk
+                return
+
+            # If still empty after all retries, yield a fallback message
+            if total_chars_yielded == 0:
+                log.error(f"❌ Model returned NO content after {_retry_count + 1} attempts")
+                fallback_msg = "К сожалению, модель не смогла сгенерировать ответ. Попробуйте переформулировать вопрос или добавить больше контекста."
+                yield fallback_msg
+
         except Exception as e:
             log.error(f"Stream exception: {type(e).__name__}: {e}")
             import traceback

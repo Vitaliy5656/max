@@ -24,11 +24,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.core.memory import memory
-from src.core.lm_client import lm_client
+from src.core.lm import lm_client
+from src.core.memory import Memory
+from src.core.config import config, ThinkingMode
+# Trigger reload for langgraph fix
 from src.core.rag import rag
 from src.core.templates import templates
-from src.core.autogpt import RunStatus  # Keep enum, use ReflectiveAgent
-from src.core.agent_v2 import ReflectiveAgent
+from src.core.autogpt import RunStatus, AutoGPTAgent
 from src.core.user_profile import user_profile
 from src.core.metrics import metrics_engine
 from src.core.adaptation import initialize_adaptation, prompt_builder
@@ -61,8 +63,8 @@ app.add_middleware(
 
 # Global state
 _initialized = False
-_current_conversation_id: Optional[str] = None
-_autogpt_agent: Optional[ReflectiveAgent] = None  # P1: Use ReflectiveAgent with verification
+
+_autogpt_agent: Optional[AutoGPTAgent] = None  # P1: Use AutoGPTAgent
 _agent_lock = asyncio.Lock()  # P1 fix: Lock for singleton race condition
 
 
@@ -137,13 +139,13 @@ async def startup():
     # P1: Initialize error_memory for learning from mistakes
     await error_memory.initialize(memory._db, embedding_service)
     
-    # P1: Use ReflectiveAgent (adds verification step to AutoGPT)
-    _autogpt_agent = ReflectiveAgent(memory._db)
+    # P1: Use AutoGPTAgent for autonomous task execution
+    _autogpt_agent = AutoGPTAgent(memory._db)
     await _autogpt_agent.initialize(memory._db)
     
     _initialized = True
     from src.core.logger import log
-    log.api("✅ AI Next Gen modules initialized (SemanticRouter, ContextPrimer, SelfReflection, ErrorMemory, ReflectiveAgent)")
+    log.api("✅ AI Next Gen modules initialized (SemanticRouter, ContextPrimer, SelfReflection, ErrorMemory, AutoGPTAgent)")
 
 
 @app.on_event("shutdown")
@@ -185,7 +187,7 @@ async def chat(request: ChatRequest):
     # Replaced with log.api/log.request_start but keeping the cleaner log for now
     from src.core.logger import log
     
-    global _current_conversation_id
+
     
     # Start request tracing
     log.request_start(request.message, request.model, request.thinking_mode)
@@ -200,7 +202,7 @@ async def chat(request: ChatRequest):
         is_new_conv = True
         log.api(f"Created conversation: {conv_id}")
         log.api("Created new conversation", id=conv_id)
-    _current_conversation_id = conv_id
+
     
     # Add user message
     await memory.add_message(conv_id, "user", request.message)
@@ -297,7 +299,6 @@ async def chat(request: ChatRequest):
                     target_model = loaded_model
                     log.api(f"🎯 MANUAL: using loaded model: {target_model}")
                 else:
-                    # Nothing loaded → use default
                     target_model = app_config.lm_studio.default_model
                     log.api(f"🎯 MANUAL: using default model: {target_model}")
             else:
@@ -313,7 +314,7 @@ async def chat(request: ChatRequest):
                     log.api(f"🧠 AUTO: reusing loaded model: {target_model}")
                 else:
                     # No model loaded, use thinking mode's config
-                    from src.core.lm_client import ThinkingMode
+                    from src.core.lm import ThinkingMode
                     try:
                         thinking_mode = ThinkingMode(request.thinking_mode)
                     except ValueError:
@@ -321,6 +322,131 @@ async def chat(request: ChatRequest):
                     mode_config = lm_client.get_mode_config(thinking_mode)
                     target_model = mode_config.model
                     log.api(f"🧠 AUTO: thinking mode selected: {target_model}")
+                    
+        # COGNITIVE LOOP ROUTING (System 2)
+        # If thinking_mode is DEEP/REASONING, and it's not a tool call, use LangGraph
+        from src.core.lm import ThinkingMode
+        try:
+            t_mode = ThinkingMode(request.thinking_mode)
+        except ValueError:
+            t_mode = ThinkingMode.STANDARD
+        
+        if t_mode == ThinkingMode.DEEP:
+            log.api("🧠 Entering System 2 Cognitive Loop")
+            # Import here to avoid circular deps if any
+            from src.core.cognitive.graph import build_cognitive_graph
+            from src.core.cognitive.types import CognitiveState, CognitiveConfig
+            import time as time_module
+
+            # P0 FIX: Timeout for Cognitive Loop (180 seconds max)
+            COGNITIVE_LOOP_TIMEOUT = 180  # seconds
+
+            # Yield initial think start
+            yield f"data: {json.dumps({'thinking': 'start'})}\n\n"
+            yield f"data: {json.dumps({'token': '🔄 Analyzing problem complexity...\n'})}\n\n"
+
+            # Build & Run Graph
+            graph = build_cognitive_graph()
+
+            # Fetch user profile context
+            profile_context = await user_profile.get_profile_summary_for_context(conv_id)
+
+            initial_state: CognitiveState = {
+                "input": request.message,
+                "conversation_id": conv_id,
+                "user_context": profile_context,
+                "plan": None,
+                "steps": [],
+                "draft_answer": "",
+                "critique": "",
+                "score": 0.0,
+                "iterations": 0,
+                "past_failures": [],
+                "thinking_tokens": [],
+                "total_iterations": 0  # P0 FIX: Global counter that never resets
+            }
+
+            # Track start time for timeout and duration
+            start_time = time_module.time()
+            final_answer = ""
+            score = 0.0
+            iterations = 0
+
+            try:
+                # P0 FIX: Wrap in asyncio.wait_for with timeout
+                async def run_cognitive_loop():
+                    nonlocal final_answer, score, iterations
+                    async for event in graph.astream(initial_state):
+                        for node_name, node_state in event.items():
+                            if node_name == "__end__":
+                                continue
+
+                            # Extract step info
+                            step_name = node_state.get("step_name", node_name)
+                            step_content = node_state.get("step_content", "")
+
+                            # Stream the step event
+                            if step_name and step_content:
+                                step_data = {
+                                    "thinking": "step",
+                                    "name": step_name.upper(),
+                                    "content": step_content
+                                }
+                                yield f"data: {json.dumps(step_data)}\n\n"
+
+                            # Keep track of final state
+                            if "draft_answer" in node_state:
+                                final_answer = node_state["draft_answer"]
+                            if "score" in node_state:
+                                score = node_state["score"]
+                            if "iterations" in node_state:
+                                iterations = node_state["iterations"]
+
+                # Stream with timeout check
+                async for sse_event in run_cognitive_loop():
+                    yield sse_event
+                    # Check timeout after each step
+                    elapsed = time_module.time() - start_time
+                    if elapsed > COGNITIVE_LOOP_TIMEOUT:
+                        log.warn(f"⏱️ Cognitive Loop TIMEOUT after {elapsed:.1f}s")
+                        yield f"data: {json.dumps({'thinking': 'timeout', 'elapsed_s': elapsed})}\n\n"
+                        break
+
+            except asyncio.TimeoutError:
+                log.error(f"⏱️ Cognitive Loop HARD TIMEOUT after {COGNITIVE_LOOP_TIMEOUT}s")
+                yield f"data: {json.dumps({'error': f'Timeout: thinking took longer than {COGNITIVE_LOOP_TIMEOUT}s'})}\n\n"
+                # Use whatever answer we have so far
+                if not final_answer:
+                    final_answer = "Извините, глубокий анализ занял слишком много времени. Попробуйте упростить вопрос."
+
+            except Exception as e:
+                log.error(f"Graph streaming error, falling back to invoke: {e}")
+                # Fallback to atomic execution with timeout
+                try:
+                    final_state = await asyncio.wait_for(
+                        graph.ainvoke(initial_state),
+                        timeout=COGNITIVE_LOOP_TIMEOUT
+                    )
+                    final_answer = final_state.get("draft_answer", "Error in cognitive loop")
+                    score = final_state.get("score", 0.0)
+                    iterations = final_state.get("iterations", 0)
+                except asyncio.TimeoutError:
+                    log.error(f"⏱️ Cognitive Loop fallback TIMEOUT")
+                    final_answer = "Извините, глубокий анализ занял слишком много времени."
+
+            # Calculate actual duration
+            duration_ms = int((time_module.time() - start_time) * 1000)
+
+            # Yield think end with real duration
+            think_summary = f"Cognitive Loop: {iterations} iterations, Score: {score:.2f}"
+            yield f"data: {json.dumps({'thinking': 'end', 'duration_ms': duration_ms, 'think_content': think_summary})}\n\n"
+
+            # Yield Final Answer
+            yield f"data: {json.dumps({'token': final_answer})}\n\n"
+
+            full_response = final_answer
+            # Save to DB logic will handle the rest in finally block
+            return
         
         # Wrap entire logic in try-finally for guaranteed save
         try:
@@ -380,7 +506,7 @@ async def chat(request: ChatRequest):
                                 full_response,
                                 all_tool_results
                             )
-                             log.api(f"⚠️ Risk assessment: level={risk.risk_level}, score={risk.risk_score:.2f}, factors={len(risk.risk_factors)}")
+                            log.api(f"⚠️ Risk assessment: level={risk.risk_level}, score={risk.risk_score:.2f}, factors={len(risk.risk_factors)}")
                             
                             # Add warnings if ANY risk detected (lowered threshold from 0.6 to 0.3)
                             if risk.risk_level != "low" or validation.risk_score > 0.3:
@@ -475,7 +601,7 @@ async def chat(request: ChatRequest):
                 # Normal streaming mode (no tools)
                 try:
                     # Convert string to ThinkingMode enum
-                    from src.core.lm_client import ThinkingMode
+                    from src.core.lm import ThinkingMode
                     try:
                         thinking_mode = ThinkingMode(request.thinking_mode)
                     except ValueError:
@@ -554,6 +680,12 @@ async def chat(request: ChatRequest):
         
         finally:
             # P0 CRITICAL FIX: Guaranteed save even on disconnect
+
+            # Note: Empty response handling is now done in lm_client._stream_response
+            # with retry logic and fallback message. This block only logs if still empty.
+            if not full_response and not error_occurred:
+                log.warn("⚠️ Empty response in finally block - lm_client should have provided fallback")
+
             if full_response:
                 try:
                     saved_msg = await memory.add_message(
@@ -589,7 +721,7 @@ async def chat(request: ChatRequest):
                             pass
                             
                 except Exception as save_err:
-                     log.error(f"FATAL: Failed to save response to DB: {save_err}")
+                    log.error(f"FATAL: Failed to save response to DB: {save_err}")
 
         log.request_end(sse_count, len(full_response), 0)
     
@@ -601,9 +733,9 @@ async def chat(request: ChatRequest):
 
 
 @app.get("/api/conversations")
-async def list_conversations(limit: int = 50):
+async def list_conversations(limit: int = 50, offset: int = 0):
     """List recent conversations with message counts."""
-    convs = await memory.list_conversations(limit=limit)
+    convs = await memory.list_conversations(limit=limit, offset=offset)
     result = []
     for c in convs:
         # P1 fix: Add message_count to match frontend interface
@@ -691,7 +823,7 @@ async def start_agent(request: AgentStartRequest):
     global _autogpt_agent
     
     if _autogpt_agent.is_running():
-        raise HTTPException(400, "Agent already running")
+        raise HTTPException(409, "Agent already running")
     
     run = await _autogpt_agent.set_goal(request.goal, request.max_steps)
     

@@ -76,6 +76,25 @@ class SafeShell:
         
         return base_cmd in WINDOWS_BUILTINS
     
+    def _validate_command(self, command: str) -> None:
+        """
+        Validate command for dangerous characters.
+        
+        Raises ValueError if dangerous characters detection.
+        """
+        # Block shell control characters unless strictly necessary (and even then be careful)
+        # & = chain commands
+        # | = pipe
+        # <, > = redirection
+        # ; = chain (Linux)
+        # ` = subshell (Linux)
+        # $ = variable (Linux/PowerShell)
+        
+        dangerous_chars = ['&', '|', '>', '<', ';', '`', '$']
+        for char in dangerous_chars:
+            if char in command:
+                 raise ValueError(f"Dangerous character '{char}' detected in command. Execution blocked for security.")
+
     def _prepare_command(self, command: str) -> tuple[str, ...]:
         """
         Prepare command for execution.
@@ -83,9 +102,24 @@ class SafeShell:
         Returns tuple of arguments for create_subprocess_exec.
         Windows built-in commands are wrapped with cmd /c.
         """
+        # Security validation
+        self._validate_command(command)
+
         if self._needs_shell_wrap(command):
             # Use cmd /c for Windows built-ins
-            return ("cmd", "/c", command)
+            # Critical P0 Fix: Don't just pass the string.
+            # We must be careful even with cmd /c.
+            # But create_subprocess_exec will handle arg quoting for the list.
+            
+            # If command is 'dir /s', we want ('cmd', '/c', 'dir', '/s') ? 
+            # No, 'dir /s' is a single shell command string for cmd /c.
+            # Wait, subprocess.exec(['cmd', '/c', 'dir /s']) works? 
+            # Ideally: ['cmd', '/c', 'dir', '/s'] 
+            # But the user passes a string "dir /s".
+            
+            # Let's split safe items.
+            tokens = shlex.split(command, posix=False) if self.is_windows else shlex.split(command)
+            return ("cmd", "/c", *tokens)
         
         # Parse command using shlex for proper quoting
         try:
@@ -182,7 +216,7 @@ class SafeShell:
             return ShellResult(
                 stdout=stdout,
                 stderr=stderr,
-                return_code=proc.returncode or -1,
+                return_code=proc.returncode if proc.returncode is not None else -1,
                 timed_out=timed_out
             )
             

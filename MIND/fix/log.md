@@ -2,6 +2,105 @@
 
 ---
 
+## 2025-12-14 02:15
+
+**Режим:** P0/P1 CRITICAL FIXES
+**Issues исправлено:** 5
+
+### Исправленные issues (из аудита /logic)
+
+| # | Issue | Изменённые файлы | Статус |
+|---|-------|------------------|--------|
+| P0 | No Timeout on Cognitive Loop | `src/api/api.py` | ✅ Fixed (180s limit) |
+| P0 | Potential Infinite Loop (replan) | `graph.py`, `types.py`, `memory.py`, `planner.py` | ✅ Fixed (total_iterations) |
+| P1 | Prompts criteria ≠ code thresholds | `prompts.py` | ✅ Fixed (aligned 0.75) |
+| P1 | CognitiveConfig dead code | `types.py`, `graph.py` | ✅ Fixed (now used!) |
+| P1 | user_context not in Executor/Verifier | `executor.py`, `verifier.py` | ✅ Fixed |
+
+### Изменения
+
+**P0: Timeout на Cognitive Loop** (`api.py`)
+- Добавлен `COGNITIVE_LOOP_TIMEOUT = 180` секунд
+- Реальный `duration_ms` вместо захардкоженного `0`
+- Fallback сообщение при timeout
+
+**P0: Бесконечный цикл** (multiple files)
+- Добавлено новое поле `total_iterations` в `CognitiveState`
+- `total_iterations` **НИКОГДА** не сбрасывается (в отличие от `iterations`)
+- Hard limit `MAX_TOTAL_ITERATIONS = 10` в `route_verification()`
+- Обновлены `memory.py` и `planner.py` для инкремента `total_iterations`
+
+**P1: Пороги и промпты** (`prompts.py`)
+- Обновлены критерии в `VERIFIER_SYSTEM_PROMPT`
+- Теперь явно указано: "Score 0.75+ = ACCEPTED"
+- Модель будет давать более высокие оценки хорошим ответам
+
+**P1: CognitiveConfig** (`types.py`, `graph.py`)
+- Добавлены поля: `max_iterations_per_plan`, `max_total_iterations`, `accept_threshold`, etc.
+- `graph.py` теперь использует `_config` вместо хардкода
+- Добавлена функция `set_cognitive_config()` для переопределения
+
+**P1: user_context** (`executor.py`, `verifier.py`)
+- Executor теперь инжектит user_context в system prompt
+- Verifier учитывает user preferences при оценке
+- Critique увеличен до 300 символов (было 100)
+
+**Tests:** Code Review + Logic Verification
+
+---
+
+## 2025-12-13 23:15
+
+**Режим:** FULL SWEEP
+**Issues исправлено:** 4
+
+### Исправленные issues
+
+| # | Issue | Изменённые файлы | Статус |
+|---|-------|------------------|--------|
+| 1 | RAG Broken References | `src/core/rag.py` | ✅ Fixed |
+| 2 | Memory Summary Data Loss | `src/core/memory.py` | ✅ Fixed |
+| 3 | AutoGPT Blind Trust | `src/core/autogpt.py` | ✅ Fixed |
+| 4 | API No Pagination | `src/api/api.py` | ✅ Fixed |
+
+### Изменения
+
+- **src/core/rag.py**: File persistence implemented (copy to `data/uploads/`).
+- **src/core/memory.py**: Recursive summarization (merging old+new).
+- **src/core/autogpt.py**: Added LLM-based verification step for task completion.
+- **src/core/memory.py**: SQL updated for OFFSET.
+- **src/api/api.py**: Endpoint updated for OFFSET.
+
+**Tests:** Verified via Code Review (Logic Hardening)
+
+---
+
+## 2025-12-13 23:10
+
+**Режим:** FULL SWEEP
+**Issues исправлено:** 5
+
+### Исправленные issues
+
+| # | Issue | Изменённые файлы | Статус |
+|---|-------|------------------|--------|
+| 1 | P0: Command Injection | src/core/safe_shell.py | ✅ Fixed |
+| 2 | P1: Race Condition | src/api/api.py | ✅ Fixed |
+| 3 | P1: Dead Code | src/api/routers/chat.py | ✅ Deleted |
+| 4 | P2: Hardcoded Config | src/core/config.py | ✅ Fixed |
+| 5 | P2: AutoGPT Singleton | src/api/api.py | ✅ Fixed (409) |
+
+### Изменения
+
+- **safe_shell.py**: Implemented strict validation for dangerous characters (`&`, `|`, `>`, etc) and fixed logic bug in return code.
+- **api.py**: Removed global `_current_conversation_id` state. Changed agent busy error to 409 Conflict.
+- **config.py**: Added `os.getenv("LM_STUDIO_URL")` support.
+- **routers/chat.py**: Deleted duplicate dead code.
+
+**Tests:** ✅ Passed (`test_safe_shell_injection.py`)
+
+---
+
 ## 2025-12-13 02:25 — Fix Memory Extraction Crash
 
 **Проблема:**

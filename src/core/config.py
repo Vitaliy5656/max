@@ -19,7 +19,7 @@ class ThinkingModeConfig:
 @dataclass
 class LMStudioConfig:
     """LM Studio server configuration."""
-    base_url: str = "http://localhost:1234/v1"
+    base_url: str = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1")
     default_model: str = "deepseek-r1-distill-llama-8b"  # Default reasoning model
     vision_model: str = "mistral-community-pixtral-12b"  # For image analysis
     reasoning_model: str = "ministral-3-14b-reasoning"  # For deep thinking
@@ -91,8 +91,8 @@ class MemoryConfig:
 
     # Facts extraction
     extract_facts: bool = True
-    # Model name as it appears in LM Studio (just call via API, assume it's available)
-    extraction_model: str = "Phi-3.5-mini-instruct.IQ1_S.gguf"
+    # Model name as it appears in LM Studio API (use short name, not .gguf filename)
+    extraction_model: str = "phi-3.5-mini-instruct"
 
     # Cross-session search
     cross_session_top_k: int = 5
