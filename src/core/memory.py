@@ -100,6 +100,11 @@ class MemoryManager:
         self._encoder = None  # Lazy loaded
         self._pending_tasks: set[asyncio.Task] = set()  # Track background fact extraction
         
+        # Phase 2B: Conversation History RAM Cache
+        self._conversation_cache: dict[str, list] = {}  # conv_id -> messages
+        self._conversation_locks: dict[str, asyncio.Lock] = {}  # Per-conversation locks
+        self._cache_max_conversations = 100  # Limit cached conversations
+        
     async def initialize(self):
         """Initialize database connection and create tables."""
         self._db = await aiosqlite.connect(str(self.db_path))
