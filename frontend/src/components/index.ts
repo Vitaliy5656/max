@@ -2,7 +2,7 @@
 export * from './types';
 export { ChatWindow } from './ChatWindow';
 export { InputArea } from './InputArea';
-export { ThinkingPanel, ThinkingIndicator, ModelLoadingIndicator, CollapsibleThink, ConfidenceBadge } from './ThinkingPanel';
+export { ThinkingPanel, ThinkingIndicator, ThinkingStepsDisplay, ModelLoadingIndicator, CollapsibleThink, ConfidenceBadge } from './ThinkingPanel';
 export { MessageBubble } from './MessageBubble';
 export { Sidebar } from './Sidebar';
 export { Header } from './Header';

@@ -10,6 +10,7 @@ Contains domain-specific routers:
 - models: /models, /config/*
 - health: /health/*
 - backup: /backup/*
+- preferences: /preferences/* (Dynamic Persona)
 """
 
 from .chat import router as chat_router
@@ -20,6 +21,7 @@ from .metrics import router as metrics_router
 from .models import router as models_router
 from .health import router as health_router
 from .backup import router as backup_router
+from .preferences import router as preferences_router
 
 __all__ = [
     "chat_router",
@@ -30,4 +32,5 @@ __all__ = [
     "models_router",
     "health_router",
     "backup_router",
+    "preferences_router",
 ]

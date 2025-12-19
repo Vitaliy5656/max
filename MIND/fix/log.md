@@ -2,7 +2,144 @@
 
 ---
 
-## 2025-12-14 02:15
+## 2025-12-15 18:17
+
+**Режим:** FULL SWEEP (UI Audit)
+**Issues исправлено:** 9
+
+### Исправленные issues
+
+| # | Issue | Изменённые файлы | Статус |
+|---|-------|------------------|--------|
+| P0 | useAgent interval leak | `useAgent.ts` | ✅ Fixed |
+| P0 | useModels hardcoded URL | `useModels.ts` | ✅ Fixed |
+| P0 | useConversations no error handling | `useConversations.ts` | ✅ Fixed |
+| P0 | addLog memory leak | `useUI.ts` | ✅ Fixed |
+| P0 | handleRegenerate не завершает action | `App.tsx` | ✅ Fixed |
+| P1 | EmptyState English text | `ResearchLab.tsx` | ✅ Fixed (RU) |
+| P1 | WebSocket без индикации статуса | `useResearch.ts` | ✅ Fixed |
+| P1 | StatsDashboard статичный статус | `ResearchLab.tsx` | ✅ Fixed |
+| P1 | sidebarOpen не персистится | `useUI.ts` | ✅ Fixed |
+
+### Изменения
+
+**useAgent.ts:**
+
+- Добавлен `pollIntervalRef` для хранения interval ID
+- useEffect cleanup очищает interval при unmount
+- Добавлена функция `stopAgent()` для принудительной остановки
+
+**useModels.ts:**
+
+- Заменён hardcoded `http://localhost:8000` на `API_BASE`
+- Добавлен rollback при ошибке `updateModelSelectionMode`
+
+**useConversations.ts:**
+
+- Добавлены `isLoading` и `error` states
+- `createConversation` обёрнут в try/catch
+- Добавлена функция `clearError()`
+
+**useUI.ts:**
+
+- `addLog()` ограничен до 100 записей (slice)
+- `sidebarOpen` сохраняется в localStorage
+- Добавлена функция `clearLogs()`
+
+**App.tsx:**
+
+- `handleRegenerate` теперь автоматически вызывает `handleSendMessage()`
+- Локализован текст "Regenerating response..." → "Регенерация ответа..."
+
+**ResearchLab.tsx:**
+
+- EmptyState переведён на русский
+- StatsDashboard получает `connectionStatus` и показывает реальный статус WS
+
+**useResearch.ts:**
+
+- Добавлен state `connectionStatus: 'connecting' | 'connected' | 'disconnected'`
+- WebSocket события обновляют статус
+
+**Tests:** ✅ TypeScript build passed (tsc --noEmit)
+
+---
+
+## 2025-12-15 18:26
+
+**Режим:** P2 IMPROVEMENTS BATCH
+**Issues исправлено:** 6
+
+### Исправленные issues
+
+| # | Issue | Изменённые файлы | Статус |
+|---|-------|------------------|--------|
+| P2 | QualityBar без объяснения | `ResearchLab.tsx` | ✅ Fixed (tooltip) |
+| P2 | TopicCard buttons скрыты без hover | `ResearchLab.tsx` | ✅ Fixed (opacity-60) |
+| P2 | TopicCard нет focus states | `ResearchLab.tsx` | ✅ Fixed (focus:ring) |
+| P2 | InputArea button без tooltip | `InputArea.tsx` | ✅ Fixed |
+| P2 | useMetrics без error callback | `useMetrics.ts` | ✅ Fixed (onError) |
+| P2 | MessageBubble feedback без tooltip | `MessageBubble.tsx` | ✅ Fixed |
+
+### Изменения
+
+**ResearchLab.tsx:**
+
+- QualityBar: tooltip explaining 70%+/40-69%/<40% thresholds
+- TopicCard: buttons visible at `opacity-60` (was `opacity-0`)
+- All buttons: `focus:ring-2` and `aria-label` for accessibility
+
+**InputArea.tsx:**
+
+- Dynamic button label (Send/Stop)
+- Focus ring with offset
+- Square icon from lucide-react for stop button
+
+**useMetrics.ts:**
+
+- Added `UseMetricsOptions` interface with `onError` callback
+- Added `isLoading` and `error` states
+
+**MessageBubble.tsx:**
+
+- Feedback buttons: added `title` attribute
+- Added `focus:ring-2` for keyboard navigation
+
+**Tests:** ✅ TypeScript build passed
+
+---
+
+## 2025-12-15 18:31
+
+**Режим:** P2 BATCH 4 (Stats & Progress)
+**Issues исправлено:** 2
+
+### Исправленные issues
+
+| # | Issue | Изменённые файлы | Статус |
+|---|-------|------------------|--------|
+| P2 | Tokens/sec counter | `useChat.ts` | ✅ Fixed |
+| P2 | Upload progress bar | `client.ts` | ✅ Fixed |
+
+### Изменения
+
+**useChat.ts:**
+
+- Added `tokenCount`, `tokensPerSecond` states
+- Added `generationStartRef` for timing
+- Reset on new message, increment in `onToken`
+- Calculate tokensPerSecond based on elapsed time
+- Exposed in return object for UI display
+
+**api/client.ts:**
+
+- Added `uploadDocumentWithProgress()` function
+- Uses XMLHttpRequest for native progress events
+- `onProgress(percent)` callback for UI progress bar
+
+**Tests:** ✅ TypeScript build passed
+
+---
 
 **Режим:** P0/P1 CRITICAL FIXES
 **Issues исправлено:** 5
@@ -20,27 +157,32 @@
 ### Изменения
 
 **P0: Timeout на Cognitive Loop** (`api.py`)
+
 - Добавлен `COGNITIVE_LOOP_TIMEOUT = 180` секунд
 - Реальный `duration_ms` вместо захардкоженного `0`
 - Fallback сообщение при timeout
 
 **P0: Бесконечный цикл** (multiple files)
+
 - Добавлено новое поле `total_iterations` в `CognitiveState`
 - `total_iterations` **НИКОГДА** не сбрасывается (в отличие от `iterations`)
 - Hard limit `MAX_TOTAL_ITERATIONS = 10` в `route_verification()`
 - Обновлены `memory.py` и `planner.py` для инкремента `total_iterations`
 
 **P1: Пороги и промпты** (`prompts.py`)
+
 - Обновлены критерии в `VERIFIER_SYSTEM_PROMPT`
 - Теперь явно указано: "Score 0.75+ = ACCEPTED"
 - Модель будет давать более высокие оценки хорошим ответам
 
 **P1: CognitiveConfig** (`types.py`, `graph.py`)
+
 - Добавлены поля: `max_iterations_per_plan`, `max_total_iterations`, `accept_threshold`, etc.
 - `graph.py` теперь использует `_config` вместо хардкода
 - Добавлена функция `set_cognitive_config()` для переопределения
 
 **P1: user_context** (`executor.py`, `verifier.py`)
+
 - Executor теперь инжектит user_context в system prompt
 - Verifier учитывает user preferences при оценке
 - Critique увеличен до 300 символов (было 100)

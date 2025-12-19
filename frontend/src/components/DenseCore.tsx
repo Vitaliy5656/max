@@ -3,13 +3,25 @@ import { BrainCircuit } from 'lucide-react';
 interface DenseCoreProps {
     intelligence: number;
     empathy: number;
+    onClick?: () => void; // UX-003: Optional click handler
 }
 
 /**
  * DenseCore - Visual representation of AI IQ and EQ metrics.
  * Features animated orbital rings showing progress.
+ * UX-003: Now clickable to open metrics modal
+ * 
+ * TODO: [BRAIN MAP PHASE 2]
+ * This component will be upgraded to:
+ * 1. Be CLICKABLE (onClick handler) ✅ DONE
+ * 2. On click: Animate expansion to full-screen modal
+ * 3. Inside modal: react-three-fiber 3D visualization of knowledge graph
+ * 4. Data source: GET /api/research/brain-map (UMAP projections)
+ * 5. Features: rotate/zoom, topic coloring, thought path traces, lasso select
+ * 
+ * See: BRAIN STORM/Extended_Search_Library/НОвые фичи.md → Phase 2
  */
-export function DenseCore({ intelligence, empathy }: DenseCoreProps) {
+export function DenseCore({ intelligence, empathy, onClick }: DenseCoreProps) {
     const size = 200;
     const center = size / 2;
 
@@ -24,7 +36,15 @@ export function DenseCore({ intelligence, empathy }: DenseCoreProps) {
     const oEQ = cEQ - (empathy / 100) * cEQ;
 
     return (
-        <div className="relative flex items-center justify-center py-6" style={{ width: size, height: size }}>
+        <div
+            className={`relative flex items-center justify-center py-6 ${onClick ? 'cursor-pointer hover:scale-105 transition-transform' : ''}`}
+            style={{ width: size, height: size }}
+            onClick={onClick}
+            title={onClick ? 'Нажмите для просмотра метрик' : undefined}
+            role={onClick ? 'button' : undefined}
+            tabIndex={onClick ? 0 : undefined}
+            onKeyDown={onClick ? (e) => e.key === 'Enter' && onClick() : undefined}
+        >
 
             {/* THE DENSE CORE */}
             <div className="absolute z-10 flex items-center justify-center">

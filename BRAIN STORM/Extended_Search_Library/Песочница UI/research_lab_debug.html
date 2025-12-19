@@ -1,0 +1,1162 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Research Lab - Песочница</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #27272a;
+            border-radius: 3px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #3f3f46;
+        }
+
+        @keyframes pulse-glow {
+
+            0%,
+            100% {
+                box-shadow: 0 0 8px rgba(99, 102, 241, 0.6);
+            }
+
+            50% {
+                box-shadow: 0 0 16px rgba(99, 102, 241, 0.8);
+            }
+        }
+
+        .animate-pulse-glow {
+            animation: pulse-glow 2s ease-in-out infinite;
+        }
+
+        @keyframes slide-in {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .animate-slide-in {
+            animation: slide-in 0.3s ease-out forwards;
+        }
+    </style>
+</head>
+
+<body class="bg-zinc-950">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        /**
+         * Research Lab - Standalone Debug
+         * 
+         * FIX: Когда только 1 активная задача — карточка растягивается на ПОЛНУЮ ширину.
+         * При 2+ задачах — grid 2-3 колонки.
+         */
+
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        // ============= ICONS (упрощённо) =============
+        const Icon = ({ name, size = 16, className = "" }) => {
+            const icons = {
+                Search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z",
+                Plus: "M12 4v16m8-8H4",
+                Trash2: "M3 6h18M8 6V4h8v2m-7 6v7m4-7v7M5 6l1 14h12l1-14",
+                RefreshCw: "M4 4v5h5M20 20v-5h-5M4 9a8 8 0 0116 0M20 15a8 8 0 01-16 0",
+                X: "M18 6L6 18M6 6l12 12",
+                Play: "M5 3l14 9-14 9V3z",
+                Stop: "M6 6h12v12H6z",
+                Terminal: "M4 17l6-6-6-6m8 14h8",
+                Activity: "M22 12h-4l-3 9L9 3l-3 9H2",
+                CheckCircle: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z",
+                Clock: "M12 7v5l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",
+                FileText: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z",
+                Database: "M4 7a8 4 0 1016 0M4 7v10a8 4 0 0016 0V7M4 12a8 4 0 0016 0",
+                Network: "M12 2a10 10 0 00-6.88 2.77L12 12l6.88-7.23A10 10 0 0012 2z",
+                Cpu: "M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2M6 6h12v12H6z",
+                Sparkles: "M9.937 15.5A2 2 0 008 17.13v.87a1 1 0 01-2 0v-.87a4 4 0 013.874-3.95l.063-.01A2 2 0 0010 11v-.87a1 1 0 012 0V11a4 4 0 01-3.874 3.95z",
+                Server: "M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01",
+                Power: "M18.36 6.64a9 9 0 11-12.73 0M12 2v10",
+                History: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",
+                Layers: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
+                Loader2: "M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-5.07l-2.83 2.83M9.76 14.24l-2.83 2.83m12.02 0l-2.83-2.83M9.76 9.76L6.93 6.93",
+                MessageCircle: "M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z",
+                ExternalLink: "M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6m4-3h6v6m-11 5L21 3",
+                Tag: "M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z",
+                BarChart: "M12 20V10m6 10V4M6 20v-4",
+                Zap: "M13 2L3 14h9l-1 8 10-12h-9l1-8z",
+                Eye: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z",
+                ChevronDown: "M6 9l6 6 6-6",
+                ChevronRight: "M9 18l6-6-6-6",
+                ChevronUp: "M18 15l-6-6-6 6",
+                Star: "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z",
+                Globe: "M12 2a10 10 0 100 20 10 10 0 000-20zM2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z",
+                Pause: "M6 4h4v16H6zM14 4h4v16h-4z",
+                RotateCcw: "M1 4v6h6M3.51 15a9 9 0 102.13-9.36L1 10",
+                List: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
+                GripVertical: "M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01"
+            };
+            return (
+                <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d={icons[name] || icons.Activity} />
+                </svg>
+            );
+        };
+
+        // ============= MOCK DATA =============
+        const STAGES = [
+            { key: 'planning', label: 'План' },
+            { key: 'hunting', label: 'Поиск' },
+            { key: 'mining', label: 'Майнинг' },
+            { key: 'polishing', label: 'Анализ' },
+            { key: 'diploma', label: 'Итог' },
+        ];
+
+        const THOUGHTS = {
+            planning: ['Анализ интента...', 'Генерация стратегии...', 'Проверка кэша...'],
+            hunting: ['PING google.com...', 'Загрузка DOM...', 'Парсинг результатов...'],
+            mining: ['Extracting text...', 'Cleaning HTML tags...', 'Chunking data...'],
+            polishing: ['Fact checking...', 'Summarizing...', 'Generating vectors...'],
+            diploma: ['Compiling report...', 'Saving to DB...', 'Finalizing...']
+        };
+
+        const INITIAL_TASK = {
+            id: 'demo-1',
+            topic: 'Архитектура Neural Engines',
+            description: 'Анализ A17 Pro, Apple Neural Engine, NVIDIA Tensor Cores',
+            max_pages: 15,
+            status: 'running',
+            progress: 0.35,
+            stage: 'mining',
+            eta_seconds: 42,
+            started_at: new Date().toISOString(),
+            logs: [
+                { timestamp: '13:57', message: 'Chunking data...', type: 'process' },
+                { timestamp: '13:57', message: 'Cleaning HTML tags...', type: 'process' },
+                { timestamp: '13:58', message: 'Extracting text...', type: 'process' },
+                { timestamp: '13:58', message: 'Chunking data...', type: 'process' },
+                { timestamp: '13:59', message: 'Extracting text...', type: 'process' }
+            ]
+        };
+
+        const MOCK_TOPICS = [
+            {
+                id: 't1', name: 'React Server Components', description: 'Архитектура и перфоманс RSC.',
+                chunk_count: 42, status: 'complete', created_at: '2024-12-13', quality: 0.85,
+                tags: ['Web', 'React', 'Frontend'],
+                facts: [
+                    'RSC рендерятся только на сервере, не увеличивая bundle',
+                    'Уменьшают размер JavaScript бандла на 30-50%',
+                    'Требуют React 18+ и специальный bundler',
+                    'Могут напрямую обращаться к базе данных',
+                    'Поддерживают async/await на уровне компонента',
+                    'Не имеют доступа к хукам useState/useEffect',
+                    'Передают данные клиентским компонентам через props',
+                    'Next.js App Router использует RSC по умолчанию'
+                ],
+                sources: [
+                    { url: 'react.dev/blog/rsc', title: 'Official React Blog' },
+                    { url: 'nextjs.org/docs/app', title: 'Next.js Documentation' },
+                    { url: 'github.com/reactjs/rfcs', title: 'React RFCs' },
+                    { url: 'vercel.com/blog', title: 'Vercel Blog' },
+                    { url: 'youtube.com/watch?v=...', title: 'React Conf 2024' }
+                ]
+            },
+            {
+                id: 't2', name: 'AI Music Generation', description: 'MusicLM, Jukebox и другие модели.',
+                chunk_count: 15, status: 'incomplete', created_at: '2024-12-10', quality: 0.45,
+                tags: ['AI', 'Audio', 'ML'],
+                facts: [
+                    'MusicLM генерирует музыку из текстовых описаний',
+                    'Jukebox от OpenAI может генерировать vocals',
+                    'Suno AI доступен для широкой публики'
+                ],
+                sources: [
+                    { url: 'google.com/musiclm', title: 'Google MusicLM' },
+                    { url: 'openai.com/jukebox', title: 'OpenAI Jukebox' }
+                ]
+            },
+            {
+                id: 't3', name: 'Квантовая криптография', description: 'Протоколы BB84 и E91.',
+                chunk_count: 89, status: 'complete', created_at: '2024-12-05', quality: 0.92,
+                tags: ['Наука', 'Криптография', 'Квантовые'],
+                facts: [
+                    'BB84 — первый протокол квантового распределения ключей',
+                    'Использует поляризацию фотонов для передачи битов',
+                    'E91 основан на квантовой запутанности',
+                    'Обнаружение подслушивания теоретически гарантировано',
+                    'Китай запустил спутник Micius для QKD в 2016'
+                ],
+                sources: [
+                    { url: 'arxiv.org/abs/quant-ph/0512258', title: 'arXiv Paper' },
+                    { url: 'nature.com/articles/...', title: 'Nature Physics' },
+                    { url: 'ibm.com/quantum', title: 'IBM Quantum' }
+                ]
+            },
+            {
+                id: 't4', name: 'Биохакинг сна', description: 'Циркадные ритмы и добавки.',
+                chunk_count: 12, status: 'failed', created_at: '2024-12-03', quality: 0.25,
+                tags: ['Здоровье', 'Биохакинг'],
+                facts: [
+                    'Мелатонин регулирует циркадные ритмы',
+                    'Синий свет подавляет выработку мелатонина'
+                ],
+                sources: [
+                    { url: 'hubermanlab.com', title: 'Huberman Lab' }
+                ]
+            }
+        ];
+
+        // Activity feed data
+        const ACTIVITY_FEED = [
+            { topic: 'React Server Components', time: '2ч назад', action: 'complete' },
+            { topic: 'AI Music Generation', time: '5ч назад', action: 'research' },
+            { topic: 'Квантовая криптография', time: 'вчера', action: 'update' },
+            { topic: 'Биохакинг сна', time: '2 дня назад', action: 'failed' }
+        ];
+
+        // All available tags
+        const ALL_TAGS = ['Web', 'React', 'Frontend', 'AI', 'Audio', 'ML', 'Наука', 'Криптография', 'Квантовые', 'Здоровье', 'Биохакинг'];
+
+        // ============= STEPPER =============
+        function ResearchStepper({ currentStageKey }) {
+            const currentIndex = STAGES.findIndex(s => s.key === currentStageKey);
+
+            return (
+                <div className="flex items-center gap-2 w-full mb-4">
+                    {STAGES.map((stage, idx) => {
+                        const isActive = idx === currentIndex;
+                        const isComplete = idx < currentIndex;
+                        return (
+                            <div key={stage.key} className="flex-1 flex flex-col items-center gap-1.5">
+                                <div className={`
+                            w-full h-1.5 rounded-full transition-all duration-500
+                            ${isActive ? 'bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.6)]' : ''}
+                            ${isComplete ? 'bg-indigo-900/40' : ''}
+                            ${!isActive && !isComplete ? 'bg-zinc-800' : ''}
+                        `} />
+                                <span className={`text-[10px] uppercase font-bold tracking-wider 
+                            ${isActive ? 'text-indigo-300' : 'text-zinc-600'}`}>
+                                    {stage.label}
+                                </span>
+                            </div>
+                        );
+                    })}
+                </div>
+            );
+        }
+
+        // ============= TERMINAL =============
+        function TaskTerminal({ logs }) {
+            const endRef = useRef(null);
+            useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
+
+            return (
+                <div className="bg-black/40 rounded-lg border border-zinc-800/50 p-3 font-mono text-xs h-28 overflow-y-auto custom-scrollbar">
+                    {logs.map((log, i) => (
+                        <div key={i} className="flex gap-2 leading-relaxed">
+                            <span className="text-zinc-600 select-none shrink-0">[{log.timestamp}]</span>
+                            <span className={`
+                        ${log.type === 'process' ? 'text-indigo-300' : ''}
+                        ${log.type === 'success' ? 'text-green-500' : ''}
+                        ${log.type === 'info' ? 'text-zinc-500' : ''}
+                    `}>
+                                {log.type === 'process' && '> '}{log.message}
+                            </span>
+                        </div>
+                    ))}
+                    <div ref={endRef} />
+                </div>
+            );
+        }
+
+        // ============= TASK CARD =============
+        function TaskCard({ task, onStop }) {
+            const isRunning = task.status === 'running';
+
+            return (
+                <div className={`
+            relative bg-zinc-900 border rounded-lg overflow-hidden transition-all duration-300 w-full
+            ${isRunning ? 'border-indigo-500/40 shadow-lg shadow-indigo-900/10' : 'border-zinc-800 opacity-75'}
+        `}>
+                    {/* Header */}
+                    <div className="px-4 py-3 border-b border-zinc-800/50 flex justify-between items-center bg-zinc-800/30">
+                        <div className="flex items-center gap-3 overflow-hidden">
+                            {isRunning ? (
+                                <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse shadow-[0_0_8px_rgba(99,102,241,1)]" />
+                            ) : (
+                                <div className="w-2 h-2 rounded-full bg-red-900" />
+                            )}
+                            <span className="text-sm font-bold text-zinc-200 uppercase tracking-wide truncate">{task.topic}</span>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            {isRunning && <span className="text-xs font-mono text-indigo-400">{task.eta_seconds}s</span>}
+                            <button
+                                onClick={() => onStop(task.id)}
+                                disabled={!isRunning}
+                                className={`text-zinc-500 p-1 rounded hover:bg-zinc-800 ${isRunning ? 'hover:text-red-400' : 'opacity-50'}`}
+                            >
+                                <Icon name="Stop" size={16} />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="p-4">
+                        <ResearchStepper currentStageKey={task.stage} />
+                        <TaskTerminal logs={task.logs} />
+
+                        {/* Progress */}
+                        <div className="absolute bottom-0 left-0 w-full h-1 bg-zinc-800">
+                            <div className={`h-full transition-all duration-300 ${isRunning ? 'bg-indigo-500' : 'bg-red-900'}`}
+                                style={{ width: `${task.progress * 100}%` }} />
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // ============= QUALITY BAR =============
+        function QualityBar({ quality }) {
+            const percent = Math.round(quality * 100);
+            const getColor = () => {
+                if (quality >= 0.8) return 'bg-green-500';
+                if (quality >= 0.5) return 'bg-yellow-500';
+                return 'bg-red-500';
+            };
+            const getLabel = () => {
+                if (quality >= 0.8) return 'Отлично';
+                if (quality >= 0.5) return 'Средне';
+                return 'Мало';
+            };
+            return (
+                <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                        <div className={`h-full ${getColor()} transition-all`} style={{ width: `${percent}%` }} />
+                    </div>
+                    <span className="text-[10px] text-zinc-500 font-mono w-14 text-right">{getLabel()}</span>
+                </div>
+            );
+        }
+
+        // ============= TOPIC CARD =============
+        function TopicCard({ topic, onDelete, onRefresh, onOpen, onAskMax, onReResearch }) {
+            // Показываем кнопку "дополнить" если качество < 70% или status != complete
+            const needsMoreResearch = topic.quality < 0.7 || topic.status !== 'complete';
+
+            return (
+                <div className="group bg-zinc-900 border border-zinc-800 hover:border-zinc-600 transition-all rounded-lg p-5 relative w-full cursor-pointer"
+                    onClick={() => onOpen(topic)}>
+                    <div className={`absolute top-0 left-0 right-0 h-[3px] rounded-t-lg 
+                        ${topic.status === 'complete' ? 'bg-green-600/60' : ''}
+                        ${topic.status === 'failed' ? 'bg-red-600/60' : ''}
+                        ${topic.status === 'incomplete' ? 'bg-yellow-600/60' : ''}
+                    `} />
+
+                    {/* ALWAYS VISIBLE: Re-research button */}
+                    <button onClick={e => { e.stopPropagation(); onReResearch(topic); }}
+                        className={`absolute top-3 right-3 p-2 rounded-lg transition-all flex items-center gap-1.5
+                            ${needsMoreResearch
+                                ? 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 border border-yellow-500/30'
+                                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-300 opacity-0 group-hover:opacity-100'
+                            }`}
+                        title="Дополнить исследование">
+                        <Icon name="RotateCcw" size={14} />
+                        {needsMoreResearch && <span className="text-[10px] font-bold">+</span>}
+                    </button>
+
+                    {/* Tags */}
+                    {topic.tags && topic.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-2 pr-12">
+                            {topic.tags.slice(0, 3).map(tag => (
+                                <span key={tag} className="px-1.5 py-0.5 bg-zinc-800 text-[9px] text-zinc-400 rounded font-mono">
+                                    {tag}
+                                </span>
+                            ))}
+                        </div>
+                    )}
+
+                    <h3 className="font-bold text-zinc-200 text-sm truncate mb-1 pr-12">{topic.name}</h3>
+                    <p className="text-xs text-zinc-400 line-clamp-2 mb-3">{topic.description}</p>
+
+                    {/* Quality Bar */}
+                    {topic.quality !== undefined && (
+                        <div className="mb-3">
+                            <QualityBar quality={topic.quality} />
+                        </div>
+                    )}
+
+                    <div className="flex items-center justify-between text-xs text-zinc-500 font-mono pt-3 border-t border-zinc-800/50">
+                        <div className="flex items-center gap-3">
+                            <span className="flex items-center gap-1.5"><Icon name="Database" size={12} /> {topic.chunk_count}</span>
+                            <span className="flex items-center gap-1.5"><Icon name="Globe" size={12} /> {topic.sources?.length || 0}</span>
+                        </div>
+                        {/* Quick Actions on hover */}
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                            <button onClick={() => onAskMax(topic)}
+                                className="text-indigo-400 hover:text-indigo-300 p-1.5 hover:bg-indigo-900/30 rounded flex items-center gap-1 text-[10px]"
+                                title="Спросить MAX">
+                                <Icon name="MessageCircle" size={12} />
+                            </button>
+                            <button onClick={() => onDelete(topic.id)} className="hover:text-red-400 p-1.5 hover:bg-zinc-800 rounded" title="Удалить">
+                                <Icon name="Trash2" size={12} />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // ============= RESEARCH QUEUE PANEL =============
+        function ResearchQueuePanel({ queue, activeSlots, maxSlots, onMoveUp, onMoveDown, onCancel, onPause, onResume }) {
+            const activeItems = queue.filter(q => q.status === 'running');
+            const queuedItems = queue.filter(q => q.status === 'queued');
+
+            if (queue.length === 0) return null;
+
+            return (
+                <div className="bg-zinc-900/80 border border-zinc-800 rounded-lg overflow-hidden">
+                    {/* Header */}
+                    <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between bg-zinc-800/30">
+                        <div className="flex items-center gap-2">
+                            <Icon name="List" size={14} className="text-indigo-400" />
+                            <span className="text-xs font-bold uppercase tracking-wide text-zinc-300">Очередь исследований</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
+                            <span className="text-indigo-400">{activeItems.length}</span>
+                            <span>/</span>
+                            <span>{maxSlots} слотов</span>
+                        </div>
+                    </div>
+
+                    {/* Active Tasks */}
+                    {activeItems.length > 0 && (
+                        <div className="p-3 border-b border-zinc-800/50">
+                            <div className="text-[10px] uppercase font-bold text-green-500 mb-2 flex items-center gap-1">
+                                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                                Активно ({activeItems.length})
+                            </div>
+                            <div className="space-y-2">
+                                {activeItems.map(item => (
+                                    <div key={item.id} className="flex items-center gap-3 bg-zinc-800/50 rounded-lg p-3">
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-xs font-bold text-zinc-200 truncate">{item.topic}</div>
+                                            <div className="flex items-center gap-2 mt-1">
+                                                <div className="flex-1 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+                                                    <div className="h-full bg-indigo-500 transition-all" style={{ width: `${item.progress * 100}%` }} />
+                                                </div>
+                                                <span className="text-[10px] text-zinc-500 font-mono">{Math.round(item.progress * 100)}%</span>
+                                            </div>
+                                        </div>
+                                        <button onClick={() => item.paused ? onResume(item.id) : onPause(item.id)}
+                                            className="p-2 rounded hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors"
+                                            title={item.paused ? "Продолжить" : "Пауза"}>
+                                            <Icon name={item.paused ? "Play" : "Pause"} size={14} />
+                                        </button>
+                                        <button onClick={() => onCancel(item.id)}
+                                            className="p-2 rounded hover:bg-red-900/30 text-zinc-400 hover:text-red-400 transition-colors"
+                                            title="Отменить">
+                                            <Icon name="X" size={14} />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Queued Tasks */}
+                    {queuedItems.length > 0 && (
+                        <div className="p-3">
+                            <div className="text-[10px] uppercase font-bold text-zinc-500 mb-2 flex items-center gap-1">
+                                <Icon name="Clock" size={10} />
+                                В очереди ({queuedItems.length})
+                            </div>
+                            <div className="space-y-1">
+                                {queuedItems.map((item, index) => (
+                                    <div key={item.id} className="flex items-center gap-2 bg-zinc-800/30 rounded-lg p-2 group/queue">
+                                        <span className="text-[10px] text-zinc-600 font-mono w-5">{index + 1}.</span>
+                                        <div className="flex-1 text-xs text-zinc-400 truncate">{item.topic}</div>
+                                        <div className="flex items-center gap-1 opacity-0 group-hover/queue:opacity-100 transition-opacity">
+                                            <button onClick={() => onMoveUp(item.id)}
+                                                disabled={index === 0}
+                                                className="p-1 rounded hover:bg-zinc-700 text-zinc-500 hover:text-zinc-300 disabled:opacity-30"
+                                                title="Поднять">
+                                                <Icon name="ChevronUp" size={12} />
+                                            </button>
+                                            <button onClick={() => onMoveDown(item.id)}
+                                                disabled={index === queuedItems.length - 1}
+                                                className="p-1 rounded hover:bg-zinc-700 text-zinc-500 hover:text-zinc-300 disabled:opacity-30"
+                                                title="Опустить">
+                                                <Icon name="ChevronDown" size={12} />
+                                            </button>
+                                            <button onClick={() => onCancel(item.id)}
+                                                className="p-1 rounded hover:bg-red-900/30 text-zinc-500 hover:text-red-400"
+                                                title="Удалить">
+                                                <Icon name="X" size={12} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // ============= TOPIC DETAIL PANEL =============
+        function TopicDetailPanel({ topic, onClose, onRefresh, onDelete, onAskMax }) {
+            const [searchQuery, setSearchQuery] = useState('');
+            const [expandedFacts, setExpandedFacts] = useState(true);
+            const [expandedSources, setExpandedSources] = useState(true);
+
+            if (!topic) return null;
+
+            const filteredFacts = topic.facts?.filter(f =>
+                f.toLowerCase().includes(searchQuery.toLowerCase())
+            ) || [];
+
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/60 backdrop-blur-sm" onClick={onClose}>
+                    <div className="bg-zinc-900 w-[520px] h-full border-l border-zinc-700 shadow-2xl flex flex-col animate-slide-in"
+                        onClick={e => e.stopPropagation()}>
+                        {/* Header */}
+                        <div className="shrink-0 bg-zinc-800/50 px-6 py-4 border-b border-zinc-700 flex justify-between items-start">
+                            <div className="flex-1 mr-4">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <Icon name="Layers" size={16} className="text-indigo-400" />
+                                    <h3 className="text-sm font-bold uppercase tracking-wide text-white truncate">{topic.name}</h3>
+                                </div>
+                                <div className="flex items-center gap-3 text-[10px] text-zinc-500 font-mono">
+                                    <span>{topic.chunk_count} chunks</span>
+                                    <span>•</span>
+                                    <span>{topic.created_at}</span>
+                                    <span>•</span>
+                                    <span className={`
+                                        ${topic.status === 'complete' ? 'text-green-500' : ''}
+                                        ${topic.status === 'failed' ? 'text-red-500' : ''}
+                                        ${topic.status === 'incomplete' ? 'text-yellow-500' : ''}
+                                    `}>{topic.status}</span>
+                                </div>
+                            </div>
+                            <button onClick={onClose} className="text-zinc-500 hover:text-white p-1 hover:bg-zinc-700 rounded">
+                                <Icon name="X" size={18} />
+                            </button>
+                        </div>
+
+                        {/* Search */}
+                        <div className="shrink-0 px-6 py-3 border-b border-zinc-800">
+                            <div className="flex items-center gap-2 bg-zinc-800/50 px-3 py-2 rounded-lg border border-zinc-700 hover:border-zinc-600 transition-colors">
+                                <Icon name="Search" size={14} className="text-zinc-500" />
+                                <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                                    placeholder="Поиск по топику..."
+                                    className="bg-transparent text-xs focus:outline-none text-zinc-300 w-full placeholder:text-zinc-600" />
+                            </div>
+                        </div>
+
+                        {/* Content */}
+                        <div className="flex-1 overflow-y-auto custom-scrollbar px-6 py-4 space-y-4">
+                            {/* Quality */}
+                            {topic.quality !== undefined && (
+                                <div className="bg-zinc-800/30 rounded-lg p-4 border border-zinc-800/50">
+                                    <div className="text-[10px] uppercase font-bold text-zinc-500 mb-2">Качество данных</div>
+                                    <QualityBar quality={topic.quality} />
+                                </div>
+                            )}
+
+                            {/* Tags */}
+                            {topic.tags && topic.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-2">
+                                    {topic.tags.map(tag => (
+                                        <span key={tag} className="px-2 py-1 bg-zinc-800 text-[10px] text-zinc-400 rounded-full font-mono flex items-center gap-1">
+                                            <Icon name="Tag" size={10} /> {tag}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Facts */}
+                            <div className="bg-zinc-800/20 rounded-lg border border-zinc-800/50 overflow-hidden">
+                                <button onClick={() => setExpandedFacts(!expandedFacts)}
+                                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-zinc-800/30 transition-colors">
+                                    <span className="text-xs font-bold text-zinc-300 flex items-center gap-2">
+                                        <Icon name="Zap" size={14} className="text-yellow-500" />
+                                        Ключевые факты ({filteredFacts.length})
+                                    </span>
+                                    <Icon name={expandedFacts ? "ChevronDown" : "ChevronRight"} size={14} className="text-zinc-500" />
+                                </button>
+                                {expandedFacts && (
+                                    <div className="px-4 pb-4 space-y-2">
+                                        {filteredFacts.length > 0 ? filteredFacts.map((fact, i) => (
+                                            <div key={i} className="flex gap-2 text-xs text-zinc-400 leading-relaxed">
+                                                <span className="text-indigo-500 shrink-0">•</span>
+                                                <span>{fact}</span>
+                                            </div>
+                                        )) : (
+                                            <p className="text-xs text-zinc-600 italic">Нет фактов{searchQuery && ' по запросу'}</p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Sources */}
+                            <div className="bg-zinc-800/20 rounded-lg border border-zinc-800/50 overflow-hidden">
+                                <button onClick={() => setExpandedSources(!expandedSources)}
+                                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-zinc-800/30 transition-colors">
+                                    <span className="text-xs font-bold text-zinc-300 flex items-center gap-2">
+                                        <Icon name="Globe" size={14} className="text-blue-500" />
+                                        Источники ({topic.sources?.length || 0})
+                                    </span>
+                                    <Icon name={expandedSources ? "ChevronDown" : "ChevronRight"} size={14} className="text-zinc-500" />
+                                </button>
+                                {expandedSources && (
+                                    <div className="px-4 pb-4 space-y-2">
+                                        {topic.sources?.length > 0 ? topic.sources.map((src, i) => (
+                                            <a key={i} href={`https://${src.url}`} target="_blank" rel="noopener noreferrer"
+                                                className="flex items-center gap-2 text-xs text-zinc-400 hover:text-indigo-400 transition-colors group/src">
+                                                <Icon name="ExternalLink" size={12} className="shrink-0 opacity-50 group-hover/src:opacity-100" />
+                                                <span className="truncate">{src.title}</span>
+                                                <span className="text-zinc-600 text-[10px] truncate hidden group-hover/src:inline">{src.url}</span>
+                                            </a>
+                                        )) : (
+                                            <p className="text-xs text-zinc-600 italic">Нет источников</p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Topic Lens */}
+                            <div className="bg-indigo-950/30 rounded-lg p-4 border border-indigo-900/30">
+                                <div className="text-[10px] uppercase font-bold text-indigo-400 mb-2 flex items-center gap-1">
+                                    <Icon name="Sparkles" size={12} /> Topic Lens
+                                </div>
+                                <p className="text-xs text-zinc-400 italic leading-relaxed">
+                                    "Вы эксперт по {topic.name}, изучивший {topic.chunk_count} источников информации. Что вы хотите узнать?"
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Footer Actions */}
+                        <div className="shrink-0 bg-zinc-800/30 px-6 py-4 border-t border-zinc-700 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <button onClick={() => onRefresh(topic.id)}
+                                    className="flex items-center gap-2 px-3 py-2 text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors">
+                                    <Icon name="RefreshCw" size={14} /> Обновить
+                                </button>
+                                <button onClick={() => onDelete(topic.id)}
+                                    className="flex items-center gap-2 px-3 py-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded-lg transition-colors">
+                                    <Icon name="Trash2" size={14} /> Удалить
+                                </button>
+                            </div>
+                            <button onClick={() => onAskMax(topic)}
+                                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold uppercase rounded-lg transition-all">
+                                <Icon name="MessageCircle" size={14} /> Спросить MAX
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // ============= MAIN APP =============
+        function App() {
+            const [tasks, setTasks] = useState([INITIAL_TASK]);
+            const [topics] = useState(MOCK_TOPICS);
+            const [showNewForm, setShowNewForm] = useState(false);
+            const [newTopic, setNewTopic] = useState('');
+            const [newDescription, setNewDescription] = useState('');
+            const [maxPages, setMaxPages] = useState(10);
+
+            // NEW: Topic Detail Panel state
+            const [selectedTopic, setSelectedTopic] = useState(null);
+
+            // NEW: Search and filter state
+            const [globalSearch, setGlobalSearch] = useState('');
+            const [selectedTag, setSelectedTag] = useState(null);
+
+            // Simulate progress
+            useEffect(() => {
+                const interval = setInterval(() => {
+                    setTasks(curr => curr.map(task => {
+                        if (task.status !== 'running') return task;
+
+                        const newProgress = Math.min(task.progress + 0.005, 1);
+                        let stage = 'planning';
+                        if (newProgress < 0.15) stage = 'planning';
+                        else if (newProgress < 0.45) stage = 'hunting';
+                        else if (newProgress < 0.70) stage = 'mining';
+                        else if (newProgress < 0.90) stage = 'polishing';
+                        else stage = 'diploma';
+
+                        let logs = task.logs;
+                        if (Math.random() > 0.85) {
+                            const thoughts = THOUGHTS[stage];
+                            logs = [...logs, {
+                                timestamp: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+                                message: thoughts[Math.floor(Math.random() * thoughts.length)],
+                                type: 'process'
+                            }].slice(-6);
+                        }
+
+                        return { ...task, progress: newProgress, stage, logs, eta_seconds: Math.max(0, Math.floor((1 - newProgress) * 60)) };
+                    }));
+                }, 100);
+                return () => clearInterval(interval);
+            }, []);
+
+            const activeTasks = tasks.filter(t => t.status === 'running');
+
+            const stopTask = (id) => setTasks(curr => curr.map(t => t.id === id ? { ...t, status: 'cancelled' } : t));
+
+            const startResearch = () => {
+                if (!newTopic.trim()) return;
+                setTasks(curr => [...curr, {
+                    id: Math.random().toString(36).substr(2, 9),
+                    topic: newTopic,
+                    description: newDescription,
+                    max_pages: maxPages,
+                    status: 'running',
+                    progress: 0,
+                    stage: 'planning',
+                    logs: [{ timestamp: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }), message: 'INIT PROCESS...', type: 'info' }],
+                    eta_seconds: 60
+                }]);
+                setShowNewForm(false);
+                setNewTopic('');
+                setNewDescription('');
+            };
+
+            // NEW: Handlers for Topic Detail Panel
+            const openTopic = (topic) => setSelectedTopic(topic);
+            const closeTopic = () => setSelectedTopic(null);
+            const askMax = (topic) => {
+                alert(`🤖 Переход в чат с контекстом: "${topic.name}"\n\nTopic Lens активирован!`);
+                closeTopic();
+            };
+            const deleteTopic = (id) => {
+                if (confirm('Удалить топик и все связанные данные?')) {
+                    alert(`Топик ${id} удалён`);
+                    closeTopic();
+                }
+            };
+            const refreshTopic = (id) => {
+                alert(`Обновление топика ${id}...`);
+            };
+
+            // =============================================
+            // RESEARCH QUEUE SYSTEM
+            // =============================================
+            const MAX_CONCURRENT_SLOTS = 2;
+            const [researchQueue, setResearchQueue] = useState([
+                // Demo data
+                { id: 'q1', topic: 'Архитектура Neural Engines', status: 'running', progress: 0.35, paused: false },
+                { id: 'q2', topic: 'Книги по Python', status: 'queued', progress: 0, paused: false },
+                { id: 'q3', topic: 'История секса', status: 'queued', progress: 0, paused: false },
+                { id: 'q4', topic: 'Квантовые алгоритмы', status: 'queued', progress: 0, paused: false },
+            ]);
+
+            // Auto-start next in queue when slot frees up
+            useEffect(() => {
+                const running = researchQueue.filter(q => q.status === 'running' && !q.paused).length;
+                if (running < MAX_CONCURRENT_SLOTS) {
+                    const nextQueued = researchQueue.find(q => q.status === 'queued');
+                    if (nextQueued) {
+                        setResearchQueue(curr => curr.map(q =>
+                            q.id === nextQueued.id ? { ...q, status: 'running' } : q
+                        ));
+                    }
+                }
+            }, [researchQueue]);
+
+            // Simulate queue progress
+            useEffect(() => {
+                const interval = setInterval(() => {
+                    setResearchQueue(curr => curr.map(q => {
+                        if (q.status !== 'running' || q.paused) return q;
+                        const newProgress = Math.min(q.progress + 0.01, 1);
+                        if (newProgress >= 1) {
+                            return { ...q, status: 'completed', progress: 1 };
+                        }
+                        return { ...q, progress: newProgress };
+                    }).filter(q => q.status !== 'completed'));
+                }, 200);
+                return () => clearInterval(interval);
+            }, []);
+
+            // Queue management functions
+            const addToQueue = (topicData) => {
+                const newItem = {
+                    id: Math.random().toString(36).substr(2, 9),
+                    topic: topicData.name || topicData.topic || 'Новое исследование',
+                    status: 'queued',
+                    progress: 0,
+                    paused: false
+                };
+                setResearchQueue(curr => [...curr, newItem]);
+                setShowNewForm(false);
+                setNewTopic('');
+                setNewDescription('');
+            };
+
+            const cancelQueueItem = (id) => {
+                setResearchQueue(curr => curr.filter(q => q.id !== id));
+            };
+
+            const pauseQueueItem = (id) => {
+                setResearchQueue(curr => curr.map(q =>
+                    q.id === id ? { ...q, paused: true } : q
+                ));
+            };
+
+            const resumeQueueItem = (id) => {
+                setResearchQueue(curr => curr.map(q =>
+                    q.id === id ? { ...q, paused: false } : q
+                ));
+            };
+
+            const moveQueueUp = (id) => {
+                setResearchQueue(curr => {
+                    const queued = curr.filter(q => q.status === 'queued');
+                    const idx = queued.findIndex(q => q.id === id);
+                    if (idx <= 0) return curr;
+                    [queued[idx - 1], queued[idx]] = [queued[idx], queued[idx - 1]];
+                    return [...curr.filter(q => q.status !== 'queued'), ...queued];
+                });
+            };
+
+            const moveQueueDown = (id) => {
+                setResearchQueue(curr => {
+                    const queued = curr.filter(q => q.status === 'queued');
+                    const idx = queued.findIndex(q => q.id === id);
+                    if (idx < 0 || idx >= queued.length - 1) return curr;
+                    [queued[idx], queued[idx + 1]] = [queued[idx + 1], queued[idx]];
+                    return [...curr.filter(q => q.status !== 'queued'), ...queued];
+                });
+            };
+
+            // Re-research handler (adds topic to queue)
+            const reResearchTopic = (topic) => {
+                addToQueue({ name: `${topic.name} (дополнение)`, ...topic });
+                alert(`📚 "${topic.name}" добавлен в очередь для дополнительного исследования!`);
+            };
+
+            // NEW: Statistics
+            const stats = useMemo(() => ({
+                totalTopics: topics.length,
+                totalChunks: topics.reduce((acc, t) => acc + t.chunk_count, 0),
+                totalSources: topics.reduce((acc, t) => acc + (t.sources?.length || 0), 0),
+                lastResearch: '2ч назад',
+                completeCount: topics.filter(t => t.status === 'complete').length,
+                avgQuality: topics.reduce((acc, t) => acc + (t.quality || 0), 0) / topics.length
+            }), [topics]);
+
+            // NEW: Filtered topics
+            const filteredTopics = useMemo(() => {
+                return topics.filter(topic => {
+                    const matchesSearch = !globalSearch ||
+                        topic.name.toLowerCase().includes(globalSearch.toLowerCase()) ||
+                        topic.description.toLowerCase().includes(globalSearch.toLowerCase()) ||
+                        topic.facts?.some(f => f.toLowerCase().includes(globalSearch.toLowerCase()));
+                    const matchesTag = !selectedTag || topic.tags?.includes(selectedTag);
+                    return matchesSearch && matchesTag;
+                });
+            }, [topics, globalSearch, selectedTag]);
+
+            return (
+                <div className="h-screen w-full bg-zinc-950 text-zinc-300 font-sans flex flex-col overflow-hidden">
+                    {/* Header */}
+                    <header className="shrink-0 h-16 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-md flex items-center justify-between px-6 z-20">
+                        <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 bg-indigo-900/30 border border-indigo-500/20 rounded-lg flex items-center justify-center text-indigo-400">
+                                <Icon name="Server" size={20} />
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-sm font-bold text-zinc-100 tracking-wider">RESEARCH_LAB</span>
+                                <span className="text-[10px] text-zinc-600 font-bold uppercase tracking-widest">Autonomous System v4.0</span>
+                            </div>
+                        </div>
+                        <button onClick={() => setShowNewForm(true)}
+                            className="flex items-center gap-2 px-4 py-2 bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-bold uppercase rounded-lg transition-all shadow-md hover:shadow-lg">
+                            <Icon name="Plus" size={14} />
+                            Новая задача
+                        </button>
+                    </header>
+
+                    {/* Main Content Container with optional Queue Sidebar */}
+                    <div className="flex-1 flex overflow-hidden">
+                        <main className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-8">
+
+                            {/* SECTION 1: ACTIVE TASKS - FULL WIDTH FIX */}
+                            <section className={`${activeTasks.length === 0 ? 'opacity-40' : ''}`}>
+                                <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-500 flex items-center gap-2 mb-4">
+                                    <Icon name="Activity" size={14} className={activeTasks.length > 0 ? "text-indigo-500 animate-pulse" : ""} />
+                                    {activeTasks.length > 0 ? `Активные процессы (${activeTasks.length})` : 'Мониторинг процессов'}
+                                </h2>
+
+                                {activeTasks.length > 0 ? (
+                                    /* 
+                                     * FIX: Если только 1 задача — занимает 100% ширины.
+                                     * Если 2+ — используем grid с max 2 колонками.
+                                     */
+                                    <div className={`
+                            ${activeTasks.length === 1
+                                            ? 'w-full'
+                                            : 'grid grid-cols-1 lg:grid-cols-2 gap-6'
+                                        }
+                        `}>
+                                        {activeTasks.map(task => (
+                                            <TaskCard key={task.id} task={task} onStop={stopTask} />
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="border border-dashed border-zinc-800/60 rounded-xl flex flex-col items-center justify-center text-zinc-700 bg-zinc-900/20 h-32">
+                                        <div className="p-3 bg-zinc-900/50 rounded-full mb-2">
+                                            <Icon name="Power" size={20} className="opacity-50" />
+                                        </div>
+                                        <span className="text-[10px] font-mono opacity-40">SYSTEM STANDBY</span>
+                                    </div>
+                                )}
+                            </section>
+
+                            {/* DIVIDER */}
+                            <div className="relative py-4">
+                                <div className="absolute inset-0 flex items-center">
+                                    <div className="w-full border-t border-zinc-800" />
+                                </div>
+                                <div className="relative flex justify-center">
+                                    <span className="bg-zinc-950 px-3 text-xs font-bold text-zinc-600 uppercase tracking-widest flex items-center gap-2">
+                                        <Icon name="Layers" size={12} />
+                                        Общий архив
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* SECTION 2: STATS DASHBOARD */}
+                            <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                                <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+                                    <div className="flex items-center gap-2 text-zinc-500 mb-2">
+                                        <Icon name="Layers" size={14} />
+                                        <span className="text-[10px] uppercase font-bold">Топиков</span>
+                                    </div>
+                                    <div className="text-2xl font-bold text-zinc-100">{stats.totalTopics}</div>
+                                    <div className="text-[10px] text-zinc-600 mt-1">{stats.completeCount} завершено</div>
+                                </div>
+                                <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+                                    <div className="flex items-center gap-2 text-zinc-500 mb-2">
+                                        <Icon name="Database" size={14} />
+                                        <span className="text-[10px] uppercase font-bold">Чанков</span>
+                                    </div>
+                                    <div className="text-2xl font-bold text-zinc-100">{stats.totalChunks}</div>
+                                    <div className="text-[10px] text-zinc-600 mt-1">в базе знаний</div>
+                                </div>
+                                <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+                                    <div className="flex items-center gap-2 text-zinc-500 mb-2">
+                                        <Icon name="Globe" size={14} />
+                                        <span className="text-[10px] uppercase font-bold">Источников</span>
+                                    </div>
+                                    <div className="text-2xl font-bold text-zinc-100">{stats.totalSources}</div>
+                                    <div className="text-[10px] text-zinc-600 mt-1">проверенных</div>
+                                </div>
+                                <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+                                    <div className="flex items-center gap-2 text-zinc-500 mb-2">
+                                        <Icon name="BarChart" size={14} />
+                                        <span className="text-[10px] uppercase font-bold">Качество</span>
+                                    </div>
+                                    <div className="text-2xl font-bold text-zinc-100">{Math.round(stats.avgQuality * 100)}%</div>
+                                    <div className="text-[10px] text-zinc-600 mt-1">в среднем</div>
+                                </div>
+                            </section>
+
+                            {/* ACTIVITY FEED */}
+                            <section className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-4 mb-8">
+                                <h3 className="text-[10px] uppercase font-bold text-zinc-500 mb-3 flex items-center gap-2">
+                                    <Icon name="History" size={12} />
+                                    Лента активности
+                                </h3>
+                                <div className="flex flex-wrap gap-3">
+                                    {ACTIVITY_FEED.map((item, i) => (
+                                        <div key={i} className="flex items-center gap-2 text-xs">
+                                            <span className={`w-1.5 h-1.5 rounded-full
+                                            ${item.action === 'complete' ? 'bg-green-500' : ''}
+                                            ${item.action === 'research' ? 'bg-indigo-500' : ''}
+                                            ${item.action === 'update' ? 'bg-yellow-500' : ''}
+                                            ${item.action === 'failed' ? 'bg-red-500' : ''}
+                                        `} />
+                                            <span className="text-zinc-400">{item.topic}</span>
+                                            <span className="text-zinc-600">{item.time}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </section>
+
+                            {/* SECTION 3: LIBRARY */}
+                            <section>
+                                {/* Header with search */}
+                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+                                    <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-500 flex items-center gap-2">
+                                        <Icon name="Database" size={14} />
+                                        Реестр знаний ({filteredTopics.length})
+                                    </h2>
+                                    <div className="flex items-center gap-2 bg-zinc-900/50 px-3 py-2 rounded-lg border border-zinc-800 w-full md:w-80 hover:border-zinc-600 transition-colors">
+                                        <Icon name="Search" size={14} className="text-zinc-500" />
+                                        <input type="text" value={globalSearch} onChange={e => setGlobalSearch(e.target.value)}
+                                            placeholder="Семантический поиск по знаниям..."
+                                            className="bg-transparent text-xs focus:outline-none text-zinc-300 w-full placeholder:text-zinc-600" />
+                                        {globalSearch && (
+                                            <button onClick={() => setGlobalSearch('')} className="text-zinc-600 hover:text-zinc-400">
+                                                <Icon name="X" size={12} />
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Tags filter */}
+                                <div className="flex flex-wrap gap-2 mb-6">
+                                    <button onClick={() => setSelectedTag(null)}
+                                        className={`px-2.5 py-1 text-[10px] rounded-full border transition-all
+                                        ${!selectedTag ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-600'}`}>
+                                        Все
+                                    </button>
+                                    {ALL_TAGS.map(tag => (
+                                        <button key={tag} onClick={() => setSelectedTag(selectedTag === tag ? null : tag)}
+                                            className={`px-2.5 py-1 text-[10px] rounded-full border transition-all flex items-center gap-1
+                                            ${selectedTag === tag ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-600'}`}>
+                                            <Icon name="Tag" size={10} /> {tag}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {/* Topic cards grid */}
+                                {filteredTopics.length > 0 ? (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                        {filteredTopics.map(topic => (
+                                            <TopicCard key={topic.id} topic={topic}
+                                                onDelete={deleteTopic}
+                                                onRefresh={refreshTopic}
+                                                onOpen={openTopic}
+                                                onAskMax={askMax}
+                                                onReResearch={reResearchTopic} />
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="border border-dashed border-zinc-800/60 rounded-xl flex flex-col items-center justify-center text-zinc-700 bg-zinc-900/20 py-12">
+                                        <Icon name="Search" size={32} className="opacity-30 mb-3" />
+                                        <span className="text-xs text-zinc-600">Ничего не найдено</span>
+                                        {(globalSearch || selectedTag) && (
+                                            <button onClick={() => { setGlobalSearch(''); setSelectedTag(null); }}
+                                                className="mt-2 text-xs text-indigo-500 hover:text-indigo-400">
+                                                Сбросить фильтры
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+                            </section>
+                        </main>
+
+                        {/* RESEARCH QUEUE SIDEBAR */}
+                        {researchQueue.length > 0 && (
+                            <aside className="w-80 shrink-0 border-l border-zinc-800 bg-zinc-950 overflow-y-auto custom-scrollbar">
+                                <ResearchQueuePanel
+                                    queue={researchQueue}
+                                    activeSlots={researchQueue.filter(q => q.status === 'running').length}
+                                    maxSlots={MAX_CONCURRENT_SLOTS}
+                                    onMoveUp={moveQueueUp}
+                                    onMoveDown={moveQueueDown}
+                                    onCancel={cancelQueueItem}
+                                    onPause={pauseQueueItem}
+                                    onResume={resumeQueueItem}
+                                />
+                            </aside>
+                        )}
+                    </div>
+
+                    {/* Topic Detail Panel - Fixed overlay */}
+                    {selectedTopic && (
+                        <TopicDetailPanel
+                            topic={selectedTopic}
+                            onClose={closeTopic}
+                            onRefresh={refreshTopic}
+                            onDelete={deleteTopic}
+                            onAskMax={askMax}
+                        />
+                    )}
+
+                    {/* Modal */}
+                    {showNewForm && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+                            <div className="bg-zinc-900 w-[480px] border border-zinc-700 shadow-2xl rounded-lg overflow-hidden">
+                                <div className="bg-zinc-800/50 px-6 py-4 border-b border-zinc-700 flex justify-between items-center">
+                                    <div className="flex items-center gap-2.5">
+                                        <Icon name="Terminal" size={16} className="text-indigo-400" />
+                                        <h3 className="text-sm font-bold uppercase tracking-wide text-white">Параметры запуска</h3>
+                                    </div>
+                                    <button onClick={() => setShowNewForm(false)} className="text-zinc-500 hover:text-white">
+                                        <Icon name="X" size={18} />
+                                    </button>
+                                </div>
+
+                                <div className="p-6 space-y-5">
+                                    <div>
+                                        <label className="text-[10px] uppercase font-bold text-zinc-500 mb-2 block">Поисковой запрос</label>
+                                        <input type="text" value={newTopic} onChange={e => setNewTopic(e.target.value)}
+                                            className="w-full bg-black border border-zinc-700 px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 rounded-lg font-mono"
+                                            placeholder="Введите тему исследования..." autoFocus />
+                                    </div>
+
+                                    <div>
+                                        <label className="text-[10px] uppercase font-bold text-zinc-500 mb-2 block">Инструкции агента</label>
+                                        <textarea value={newDescription} onChange={e => setNewDescription(e.target.value)}
+                                            className="w-full bg-black border border-zinc-700 p-4 text-sm text-white focus:outline-none focus:border-indigo-500 rounded-lg resize-none h-24 font-mono"
+                                            placeholder="// Опциональные параметры..." />
+                                    </div>
+
+                                    <div className="bg-zinc-950/50 p-4 rounded-lg border border-zinc-800/50">
+                                        <div className="flex justify-between text-[10px] uppercase font-bold text-zinc-500 mb-3">
+                                            <span>Глубина сканирования</span>
+                                            <span className="text-indigo-400 font-mono">{maxPages} PAGE_LIMIT</span>
+                                        </div>
+                                        <input type="range" min={5} max={50} step={5} value={maxPages} onChange={e => setMaxPages(Number(e.target.value))}
+                                            className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                                    </div>
+                                </div>
+
+                                <div className="bg-zinc-800/30 px-6 py-4 border-t border-zinc-700 flex justify-end gap-3">
+                                    <button onClick={() => setShowNewForm(false)} className="text-xs font-bold text-zinc-500 hover:text-zinc-300 px-4 py-2 uppercase">Отмена</button>
+                                    <button onClick={() => addToQueue({ name: newTopic, description: newDescription })}
+                                        disabled={!newTopic.trim()}
+                                        className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold uppercase px-5 py-2 rounded-lg disabled:opacity-50 flex items-center gap-2">
+                                        <Icon name="Plus" size={12} />
+                                        В очередь
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+
+</html>

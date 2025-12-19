@@ -20,15 +20,17 @@ class ThinkingModeConfig:
 class LMStudioConfig:
     """LM Studio server configuration."""
     base_url: str = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1")
-    default_model: str = "deepseek-r1-distill-llama-8b"  # Default reasoning model
+    # NOTE: Use model identifiers as they appear in `lms ps` or LM Studio API
+    default_model: str = "mistralai-mistral-nemo-instruct-2407-12b-mpoa-v1-i1"  # Main model (12B, fast, tested)
     vision_model: str = "mistral-community-pixtral-12b"  # For image analysis
-    reasoning_model: str = "ministral-3-14b-reasoning"  # For deep thinking
-    quick_model: str = "deepseek-r1-distill-llama-8b"  # For fast responses
+    reasoning_model: str = "mistralai-mistral-nemo-instruct-2407-12b-mpoa-v1-i1"  # For deep thinking
+    quick_model: str = "mistralai-mistral-nemo-instruct-2407-12b-mpoa-v1-i1"  # For fast responses
     
     # Generation parameters
     temperature: float = 0.7
     max_tokens: int = 4096
     top_p: float = 0.9
+    repetition_penalty: float = 1.1  # Reduce repetition artifacts
     
     # Thinking time (seconds) - minimum wait for reasoning
     min_thinking_time: int = 0
@@ -47,13 +49,13 @@ class LMStudioConfig:
     # Thinking Modes Configuration
     thinking_modes: dict = field(default_factory=lambda: {
         "fast": ThinkingModeConfig(
-            model="deepseek-r1-distill-llama-8b",
+            model="mistralai-mistral-nemo-instruct-2407-12b-mpoa-v1-i1",
             temperature=0.5,
             max_tokens=1024,
             system_prompt_suffix="Отвечай кратко и по делу. Без лишних рассуждений."
         ),
         "standard": ThinkingModeConfig(
-            model="deepseek-r1-distill-llama-8b",
+            model="mistralai-mistral-nemo-instruct-2407-12b-mpoa-v1-i1",
             temperature=0.7,
             max_tokens=4096,
             system_prompt_suffix=""
@@ -82,7 +84,7 @@ class MemoryConfig:
     """Memory system configuration."""
     # Session memory
     max_session_messages: int = 50
-    max_context_tokens: int = 8000
+    max_context_tokens: int = 12000  # Expanded for 16GB VRAM
 
     # Summarization threshold
     summarize_after_messages: int = 30
@@ -91,8 +93,12 @@ class MemoryConfig:
 
     # Facts extraction
     extract_facts: bool = True
-    # Model name as it appears in LM Studio API (use short name, not .gguf filename)
+    # Model for fact extraction (structured JSON output)
+    # NOTE: Load this model on CPU in LM Studio to free GPU VRAM for main model
     extraction_model: str = "phi-3.5-mini-instruct"
+    # Model for embeddings (vector representations for Brain Map)
+    # NOTE: Load this model on CPU in LM Studio to free GPU VRAM for main model
+    embedding_model: str = "text-embedding-bge-m3"
 
     # Cross-session search
     cross_session_top_k: int = 5
@@ -123,6 +129,15 @@ class UserProfileConfig:
 
 
 @dataclass
+class GeminiConfig:
+    """Gemini API configuration."""
+    api_key: str = os.getenv("GEMINI_API_KEY", "")
+    model: str = "gemini-1.5-flash-002"
+    temperature: float = 0.7
+    max_tokens: int = 4096
+
+
+@dataclass
 class AppConfig:
     """Main application configuration."""
     # Paths - now using system-appropriate locations
@@ -141,11 +156,15 @@ class AppConfig:
     # Language
     default_language: str = "auto"  # "auto", "ru", "en"
     
+    # Provider Selection (default = lmstudio)
+    default_provider: str = os.getenv("DEFAULT_PROVIDER", "lmstudio")
+    
     # Sub-configs
     lm_studio: LMStudioConfig = field(default_factory=LMStudioConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     user_profile: UserProfileConfig = field(default_factory=UserProfileConfig)
     rag: RAGConfig = field(default_factory=RAGConfig)
+    gemini: GeminiConfig = field(default_factory=GeminiConfig)
     
     def __post_init__(self):
         # Ensure directories exist

@@ -20,10 +20,14 @@ from PIL import Image
 
 @dataclass
 class ToolResult:
-    """Result of tool execution."""
+    """Result of tool execution with MO_Guard Protocol."""
     success: bool
     output: str
     error: Optional[str] = None
+    # MO_Guard Protocol for confirmations:
+    status: str = "complete"  # "complete" | "pending" | "error"
+    confirmation_id: Optional[str] = None
+    confirmation_message: Optional[str] = None
 
 
 # Security: Allowed paths for file operations (sandbox)
@@ -334,9 +338,14 @@ class ToolExecutor:
             return ToolResult(False, "", str(e))
     
     async def _tool_write_file(self, path: str, content: str, append: bool = False) -> ToolResult:
-        """Write to file."""
+        """Write to file with Shadow Copy backup."""
         try:
             p = _validate_path(path)
+            
+            # Shadow Copy: backup before overwrite
+            if p.exists() and not append:
+                self._create_shadow_copy(p)
+            
             p.parent.mkdir(parents=True, exist_ok=True)
             
             mode = "a" if append else "w"
@@ -348,6 +357,15 @@ class ToolExecutor:
             return ToolResult(False, "", str(e))
         except Exception as e:
             return ToolResult(False, "", str(e))
+    
+    def _create_shadow_copy(self, path: Path) -> Path:
+        """Shadow Copy — mandatory backup before overwrite."""
+        backup_dir = Path("data/.file_backups")
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = backup_dir / f"{path.name}.{timestamp}.bak"
+        shutil.copy2(path, backup_path)
+        return backup_path
     
     async def _tool_list_directory(self, path: str, recursive: bool = False, limit: int = MAX_DIRECTORY_ITEMS) -> ToolResult:
         """List directory contents with limit to prevent memory issues."""

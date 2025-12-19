@@ -74,20 +74,8 @@ async def stream_response(
         stream = await client.chat.completions.create(**params)
         log.lm("Stream connection established ✓")
         
-        chunk_iterator = stream.__aiter__()
-        
-        while True:
-            try:
-                # Wait for next chunk with timeout
-                chunk = await asyncio.wait_for(chunk_iterator.__anext__(), timeout=HEARTBEAT_INTERVAL)
-                last_yield_time = time.time()
-            except asyncio.TimeoutError:
-                # No chunk received within interval -> Emit Pulse
-                yield {"_meta": "pulse", "model": model}
-                continue
-            except StopAsyncIteration:
-                break
-            
+        # Simple iteration without timeout (heartbeat was breaking the stream)
+        async for chunk in stream:
             chunk_count += 1
 
             

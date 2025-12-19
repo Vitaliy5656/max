@@ -1,0 +1,665 @@
+/**
+ * Визуализация компонента Research Lab (Final v2)
+ * * INVESTIGATION FIX: 
+ * 1. Grid для активных задач теперь `xl:grid-cols-3`. Карточки будут шире (33% экрана), 
+ * что убирает ощущение "зажатости" влево на больших мониторах.
+ * 2. IMMEDIATE VISIBILITY: Добавлен `INITIAL_RUNNING_TASK` в стейт по умолчанию.
+ * * Полная ширина (w-full) сохранена.
+ */
+
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { 
+    Search, Plus, Trash2, RefreshCw, X, Sparkles, 
+    Terminal, Activity, CheckCircle, Clock, FileText, Loader2, Server, 
+    Database, Network, Cpu, StopCircle, Play, Power, History, Layers
+} from 'lucide-react';
+
+// ============= MOCK DATA & TYPES =============
+
+export interface LogEntry {
+    timestamp: string;
+    message: string;
+    type: 'info' | 'success' | 'warning' | 'process' | 'error';
+}
+
+export interface ResearchTask {
+    id: string;
+    topic: string;
+    description: string;
+    max_pages: number;
+    status: 'pending' | 'running' | 'complete' | 'cancelled' | 'failed';
+    progress: number;
+    stage: string;
+    logs: LogEntry[];
+    eta_seconds?: number;
+    started_at?: string;
+    completed_at?: string;
+}
+
+export interface Topic {
+    id: string;
+    name: string;
+    description: string;
+    chunk_count: number;
+    skill?: string;
+    status: string;
+    created_at: string;
+}
+
+const STAGES = [
+    { key: 'planning', label: 'План', icon: FileText },
+    { key: 'hunting', label: 'Поиск', icon: Network },
+    { key: 'mining', label: 'Майнинг', icon: Database },
+    { key: 'polishing', label: 'Анализ', icon: Cpu },
+    { key: 'diploma', label: 'Итог', icon: Sparkles },
+];
+
+const THOUGHTS = {
+    planning: ['Анализ интента...', 'Генерация стратегии...', 'Выбор источников...', 'Проверка кэша...'],
+    hunting: ['PING google.com...', 'Обход robots.txt...', 'Загрузка DOM дерева...', 'Фильтрация рекламы...'],
+    mining: ['Extracting text...', 'Cleaning HTML tags...', 'Tokenization...', 'Chunking data...'],
+    polishing: ['Fact checking...', 'Summarizing chunks...', 'Linking entities...', 'Generating vectors...'],
+    diploma: ['Compiling report...', 'Saving to vector db...', 'Finalizing...', 'Optimizing skill...']
+};
+
+// Задача, которая будет видна сразу
+const INITIAL_RUNNING_TASK: ResearchTask = {
+    id: 'demo-init',
+    topic: 'Архитектура Neural Engines',
+    description: 'Анализ нейропроцессоров последнего поколения (Apple, NVIDIA)',
+    max_pages: 15,
+    status: 'running',
+    progress: 0.35,
+    stage: 'hunting',
+    eta_seconds: 42,
+    started_at: new Date().toISOString(),
+    logs: [
+        { timestamp: '10:00:01', message: 'SYSTEM INIT...', type: 'info' },
+        { timestamp: '10:00:02', message: 'Allocating resources', type: 'process' },
+        { timestamp: '10:00:05', message: 'Target: "Neural Engine Architecture"', type: 'info' },
+        { timestamp: '10:00:12', message: 'Parsing google results...', type: 'process' },
+        { timestamp: '10:00:15', message: 'Found 14 relevant PDFs', type: 'success' },
+        { timestamp: '10:00:18', message: 'Downloading sources...', type: 'process' }
+    ]
+};
+
+const MOCK_TOPICS: Topic[] = [
+    {
+        id: 't1',
+        name: 'React Server Components',
+        description: 'Архитектура и перфоманс RSC.',
+        chunk_count: 42,
+        skill: 'RSC Expert',
+        status: 'complete',
+        created_at: new Date(Date.now() - 86400000 * 2).toISOString()
+    },
+    {
+        id: 't2',
+        name: 'AI Music Generation',
+        description: 'MusicLM, Jukebox и другие модели.',
+        chunk_count: 15,
+        status: 'incomplete',
+        created_at: new Date(Date.now() - 86400000 * 5).toISOString()
+    },
+    {
+        id: 't3',
+        name: 'Квантовая криптография',
+        description: 'Протоколы BB84 и E91.',
+        chunk_count: 89,
+        status: 'complete',
+        skill: 'Quantum Sec',
+        created_at: new Date(Date.now() - 86400000 * 10).toISOString()
+    },
+    {
+        id: 't4',
+        name: 'Биохакинг сна',
+        description: 'Циркадные ритмы и добавки.',
+        chunk_count: 12,
+        status: 'failed',
+        created_at: new Date(Date.now() - 86400000 * 12).toISOString()
+    }
+];
+
+// ============= MOCK HOOK =============
+
+function useMockResearch(options?: { onTaskComplete?: (task: ResearchTask) => void }) {
+    const [topics, setTopics] = useState<Topic[]>(MOCK_TOPICS);
+    
+    // ИНИЦИАЛИЗАЦИЯ СРАЗУ С ЗАДАЧЕЙ
+    const [tasks, setTasks] = useState<ResearchTask[]>([INITIAL_RUNNING_TASK]);
+    
+    const [sessionCompletedTasks, setSessionCompletedTasks] = useState<ResearchTask[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setTasks(currentTasks => {
+                let hasChanges = false;
+                const updatedTasks = currentTasks.map(task => {
+                    if (task.status !== 'running') return task;
+
+                    const newProgress = Math.min(task.progress + 0.003, 1); // Чуть медленнее для демо
+                    let currentStageKey = 'planning';
+                    
+                    if (newProgress < 0.15) currentStageKey = 'planning';
+                    else if (newProgress < 0.45) currentStageKey = 'hunting';
+                    else if (newProgress < 0.70) currentStageKey = 'mining';
+                    else if (newProgress < 0.90) currentStageKey = 'polishing';
+                    else currentStageKey = 'diploma';
+
+                    let newLogs = task.logs;
+                    if (Math.random() > 0.7) {
+                        const stageThoughts = THOUGHTS[currentStageKey as keyof typeof THOUGHTS] || THOUGHTS['planning'];
+                        const randomThought = stageThoughts[Math.floor(Math.random() * stageThoughts.length)];
+                        newLogs = [...newLogs, {
+                            timestamp: new Date().toLocaleTimeString('ru-RU', { hour12: false, minute: '2-digit', second: '2-digit' }),
+                            message: randomThought,
+                            type: 'process'
+                        }].slice(-6);
+                    }
+
+                    if (newProgress >= 1) {
+                        const completedTask = { 
+                            ...task, 
+                            progress: 1, 
+                            status: 'complete' as const, 
+                            stage: 'diploma',
+                            completed_at: new Date().toISOString(),
+                            logs: [...newLogs, { timestamp: new Date().toLocaleTimeString(), message: 'DONE.', type: 'success' as const }]
+                        };
+                        
+                        setTimeout(() => {
+                            options?.onTaskComplete?.(completedTask);
+                            
+                            setTopics(prev => [{
+                                id: task.id,
+                                name: task.topic,
+                                description: task.description,
+                                chunk_count: Math.floor(Math.random() * 50) + 10,
+                                status: 'complete',
+                                created_at: new Date().toISOString(),
+                                skill: `Expertise: ${task.topic}`
+                            }, ...prev]);
+
+                            setSessionCompletedTasks(prev => [completedTask, ...prev]);
+                            
+                            setTimeout(() => {
+                                setTasks(curr => curr.filter(t => t.id !== task.id));
+                            }, 1000);
+                        }, 500);
+                        
+                        hasChanges = true;
+                        return completedTask;
+                    }
+
+                    hasChanges = true;
+                    return {
+                        ...task,
+                        progress: newProgress,
+                        stage: currentStageKey,
+                        logs: newLogs,
+                        eta_seconds: Math.max(0, Math.floor((1 - newProgress) * 60))
+                    };
+                });
+
+                return hasChanges ? updatedTasks : currentTasks;
+            });
+        }, 100);
+
+        return () => clearInterval(interval);
+    }, [options]);
+
+    const startResearch = async (topic: string, description: string, maxPages: number) => {
+        setIsLoading(true);
+        await new Promise(resolve => setTimeout(resolve, 400));
+        
+        const newTask: ResearchTask = {
+            id: Math.random().toString(36).substr(2, 9),
+            topic,
+            description,
+            max_pages: maxPages,
+            status: 'running',
+            progress: 0,
+            stage: 'planning',
+            logs: [{ timestamp: new Date().toLocaleTimeString(), message: 'INIT PROCESS...', type: 'info' }],
+            eta_seconds: 60,
+            started_at: new Date().toISOString()
+        };
+
+        setTasks(prev => [newTask, ...prev]);
+        setIsLoading(false);
+    };
+
+    const stopResearch = async (taskId: string) => {
+        setTasks(prev => prev.map(t => {
+            if (t.id === taskId) {
+                return { 
+                    ...t, 
+                    status: 'cancelled', 
+                    logs: [...t.logs, { timestamp: new Date().toLocaleTimeString(), message: 'ABORTED BY USER.', type: 'error' }] 
+                };
+            }
+            return t;
+        }));
+    };
+
+    const deleteTopic = async (topicId: string) => {
+        if (!window.confirm('Удалить?')) return false;
+        setTopics(prev => prev.filter(t => t.id !== topicId));
+        return true;
+    };
+
+    const clearSessionTask = (taskId: string) => {
+        setSessionCompletedTasks(prev => prev.filter(t => t.id !== taskId));
+    };
+
+    const refreshTopic = async (topicId: string) => {
+        const topic = topics.find(t => t.id === topicId);
+        if (topic) startResearch(topic.name, topic.description, 10);
+    };
+
+    return { topics, tasks, sessionCompletedTasks, isLoading, startResearch, stopResearch, deleteTopic, refreshTopic, clearSessionTask };
+}
+
+// ============= UI COMPONENTS =============
+
+function ResearchStepper({ currentStageKey }: { currentStageKey: string }) {
+    const currentIndex = STAGES.findIndex(s => s.key === currentStageKey);
+
+    return (
+        <div className="flex items-center gap-2 w-full mb-4">
+            {STAGES.map((stage, idx) => {
+                const isActive = idx === currentIndex;
+                const isComplete = idx < currentIndex;
+                const Icon = stage.icon;
+
+                return (
+                    <div key={stage.key} className="flex-1 flex flex-col items-center gap-1.5 group">
+                        <div className={`
+                            w-full h-1.5 rounded-full transition-all duration-500
+                            ${isActive ? 'bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.6)]' : ''}
+                            ${isComplete ? 'bg-indigo-900/40' : ''}
+                            ${!isActive && !isComplete ? 'bg-zinc-800' : ''}
+                        `}/>
+                        <div className="flex items-center gap-1.5 opacity-90">
+                            <Icon size={12} className={isActive ? 'text-indigo-400' : isComplete ? 'text-indigo-800' : 'text-zinc-600'} />
+                            <span className={`text-[10px] uppercase font-bold tracking-wider ${isActive ? 'text-indigo-300' : 'text-zinc-600'}`}>
+                                {stage.label}
+                            </span>
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+function TaskTerminal({ logs }: { logs: LogEntry[] }) {
+    const endRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [logs]);
+
+    return (
+        <div className="bg-black/40 rounded-lg border border-zinc-800/50 p-3 font-mono text-xs h-28 overflow-y-auto custom-scrollbar shadow-inner">
+            {logs.map((log, i) => (
+                <div key={i} className="flex gap-2 animate-in slide-in-from-left-1 duration-200 leading-relaxed">
+                    <span className="text-zinc-600 select-none shrink-0">[{log.timestamp}]</span>
+                    <span className={`break-words
+                        ${log.type === 'info' ? 'text-zinc-500' : ''}
+                        ${log.type === 'process' ? 'text-indigo-300' : ''}
+                        ${log.type === 'success' ? 'text-green-500' : ''}
+                        ${log.type === 'warning' ? 'text-yellow-500' : ''}
+                        ${log.type === 'error' ? 'text-red-500' : ''}
+                    `}>
+                        {log.type === 'process' && '> '}
+                        {log.message}
+                    </span>
+                </div>
+            ))}
+            <div ref={endRef} />
+        </div>
+    );
+}
+
+function TaskCard({ task, onStop }: { task: ResearchTask; onStop: (id: string) => void }) {
+    const isRunning = task.status === 'running';
+
+    return (
+        <div className={`
+            relative bg-zinc-900 border rounded-lg overflow-hidden transition-all duration-300 w-full
+            ${isRunning ? 'border-indigo-500/40 shadow-lg shadow-indigo-900/10' : 'border-zinc-800 opacity-75'}
+        `}>
+            {/* Header */}
+            <div className="px-4 py-3 border-b border-zinc-800/50 flex justify-between items-center bg-zinc-800/30">
+                <div className="flex items-center gap-3 overflow-hidden">
+                    {isRunning ? (
+                        <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse shadow-[0_0_8px_rgba(99,102,241,1)]" />
+                    ) : (
+                        <div className="w-2 h-2 rounded-full bg-red-900" />
+                    )}
+                    <span className="text-sm font-bold text-zinc-200 uppercase tracking-wide truncate">{task.topic}</span>
+                </div>
+                <div className="flex items-center gap-4">
+                    {isRunning && (
+                         <span className="text-xs font-mono text-indigo-400">{task.eta_seconds}s</span>
+                    )}
+                    <button 
+                        onClick={() => onStop(task.id)}
+                        disabled={!isRunning}
+                        className={`text-zinc-500 transition-colors p-1 rounded hover:bg-zinc-800 ${isRunning ? 'hover:text-red-400 cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                        title="Остановить процесс"
+                    >
+                        <StopCircle size={16} />
+                    </button>
+                </div>
+            </div>
+
+            <div className="p-4">
+                <ResearchStepper currentStageKey={task.stage} />
+                <TaskTerminal logs={task.logs} />
+                
+                {/* Progress Line */}
+                <div className="absolute bottom-0 left-0 w-full h-1 bg-zinc-800">
+                    <div 
+                        className={`h-full transition-all duration-300 ${isRunning ? 'bg-indigo-500' : 'bg-red-900'}`}
+                        style={{ width: `${task.progress * 100}%` }}
+                    />
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function SessionTaskCard({ task, onDismiss }: { task: ResearchTask; onDismiss: (id: string) => void }) {
+    return (
+        <div className="bg-zinc-900/50 border border-green-900/30 rounded-lg p-4 flex justify-between items-center animate-in fade-in slide-in-from-top-2 duration-300 w-full">
+            <div className="flex items-center gap-4">
+                <div className="w-8 h-8 rounded-full bg-green-900/20 flex items-center justify-center text-green-500">
+                    <CheckCircle size={16} />
+                </div>
+                <div>
+                    <h4 className="text-sm font-bold text-zinc-200">{task.topic}</h4>
+                    <p className="text-xs text-zinc-500 flex items-center gap-2 mt-0.5">
+                        <Clock size={10} />
+                        Завершено в {new Date(task.completed_at!).toLocaleTimeString()}
+                    </p>
+                </div>
+            </div>
+            <button 
+                onClick={() => onDismiss(task.id)}
+                className="text-xs text-zinc-500 hover:text-white px-3 py-1 bg-zinc-800 rounded hover:bg-zinc-700 transition-colors"
+            >
+                В архив
+            </button>
+        </div>
+    );
+}
+
+function TopicCard({ topic, onDelete, onRefresh }: { topic: Topic; onDelete: (id: string) => void; onRefresh: (id: string) => void; }) {
+    return (
+        <div className="group bg-zinc-900 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-800/80 transition-all duration-200 rounded-lg p-5 flex flex-col h-full relative shadow-sm hover:shadow-md w-full">
+            <div className={`absolute top-0 left-0 right-0 h-[3px] rounded-t-lg 
+                ${topic.status === 'complete' ? 'bg-green-600/60' : ''}
+                ${topic.status === 'failed' ? 'bg-red-600/60' : ''}
+                ${topic.status === 'incomplete' ? 'bg-yellow-600/60' : ''}
+            `} />
+
+            <div className="flex justify-between items-start mb-3">
+                 <h3 className="font-bold text-zinc-200 text-sm truncate pr-2 w-full" title={topic.name}>{topic.name}</h3>
+            </div>
+            
+            <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed mb-4 flex-1">{topic.description}</p>
+            
+            <div className="flex items-center justify-between text-xs text-zinc-500 font-mono mt-auto pt-3 border-t border-zinc-800/50">
+                <div className="flex items-center gap-3">
+                    <span className="flex items-center gap-1.5"><Database size={12}/> {topic.chunk_count}</span>
+                    <span className="flex items-center gap-1.5"><Clock size={12}/> {new Date(topic.created_at).getDate()}/{new Date(topic.created_at).getMonth()+1}</span>
+                </div>
+                
+                <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => onRefresh(topic.id)} className="hover:text-indigo-400 p-1.5 hover:bg-zinc-800 rounded transition-colors"><RefreshCw size={14}/></button>
+                    <button onClick={() => onDelete(topic.id)} className="hover:text-red-400 p-1.5 hover:bg-zinc-800 rounded transition-colors"><Trash2 size={14}/></button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ============= MAIN COMPONENT =============
+
+export default function App() {
+    const [showNewForm, setShowNewForm] = useState(false);
+    const [newTopic, setNewTopic] = useState('');
+    const [newDescription, setNewDescription] = useState('');
+    const [maxPages, setMaxPages] = useState(10);
+    const [completedTask, setCompletedTask] = useState<ResearchTask | null>(null);
+
+    const {
+        topics,
+        tasks,
+        sessionCompletedTasks,
+        isLoading,
+        startResearch,
+        stopResearch,
+        deleteTopic,
+        refreshTopic,
+        clearSessionTask
+    } = useMockResearch({
+        onTaskComplete: (task) => setCompletedTask(task)
+    });
+
+    const activeTasks = tasks.filter(t => t.status === 'running' || t.status === 'pending');
+    
+    // Фильтр и Сортировка топиков (сначала новые)
+    const sortedTopics = useMemo(() => {
+        return [...topics].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    }, [topics]);
+
+    const handleStart = async () => {
+        if (!newTopic.trim()) return;
+        await startResearch(newTopic, newDescription, maxPages);
+        setShowNewForm(false);
+        setNewTopic('');
+        setNewDescription('');
+    };
+
+    return (
+        <div className="h-screen w-full bg-zinc-950 text-zinc-300 font-sans flex flex-col overflow-hidden selection:bg-indigo-900/30 selection:text-white">
+            {/* Top Bar */}
+            <header className="shrink-0 h-16 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-md flex items-center justify-between px-6 z-20 w-full">
+                <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 bg-indigo-900/30 border border-indigo-500/20 rounded-lg flex items-center justify-center text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.15)]">
+                        <Server size={20} />
+                    </div>
+                    <div className="flex flex-col justify-center">
+                        <span className="text-sm font-bold text-zinc-100 tracking-wider">RESEARCH_LAB</span>
+                        <span className="text-[10px] text-zinc-600 font-bold uppercase tracking-widest">Autonomous System v4.0</span>
+                    </div>
+                </div>
+                <button
+                    onClick={() => setShowNewForm(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-bold uppercase tracking-wide rounded-lg transition-all shadow-md hover:shadow-lg hover:scale-105 active:scale-95"
+                >
+                    <Plus size={14} />
+                    Новая задача
+                </button>
+            </header>
+
+            {/* Main Content Area - FULL WIDTH */}
+            <main className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6 scroll-smooth w-full max-w-none">
+                <div className="w-full max-w-none space-y-12">
+                    
+                    {/* SECTION 1: DASHBOARD (ACTIVE) */}
+                    <section className={`w-full transition-all duration-500 ${activeTasks.length === 0 ? 'opacity-40 grayscale-[0.5] hover:opacity-100 hover:grayscale-0' : 'opacity-100'}`}>
+                        <div className="flex items-center justify-between mb-4 px-1">
+                            <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-500 flex items-center gap-2">
+                                <Activity size={14} className={activeTasks.length > 0 ? "text-indigo-500 animate-pulse" : ""} />
+                                {activeTasks.length > 0 ? `Активные процессы (${activeTasks.length})` : 'Мониторинг процессов'}
+                            </h2>
+                        </div>
+                        
+                        {activeTasks.length > 0 ? (
+                            // КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Grid ограничен 3 колонками (xl:grid-cols-3)
+                            // Это делает карточки шире на больших экранах, заполняя пустоту справа.
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 w-full">
+                                {activeTasks.map(task => (
+                                    <TaskCard key={task.id} task={task} onStop={stopResearch} />
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="w-full border border-dashed border-zinc-800/60 rounded-xl flex flex-col items-center justify-center text-zinc-700 bg-zinc-900/20 h-32 transition-colors group cursor-default">
+                                <div className="p-3 bg-zinc-900/50 rounded-full mb-2 group-hover:scale-110 transition-transform">
+                                    <Power size={20} className="opacity-50" />
+                                </div>
+                                <span className="text-[10px] font-mono opacity-40">SYSTEM STANDBY</span>
+                            </div>
+                        )}
+                    </section>
+
+                    {/* SECTION 1.5: SESSION COMPLETED */}
+                    {sessionCompletedTasks.length > 0 && (
+                        <section className="w-full border-t border-zinc-900 pt-8 animate-in fade-in slide-in-from-top-4 duration-500">
+                             <div className="flex items-center justify-between mb-4 px-1">
+                                <h2 className="text-xs font-bold uppercase tracking-widest text-green-700/70 flex items-center gap-2">
+                                    <History size={14} />
+                                    Завершено в текущей сессии ({sessionCompletedTasks.length})
+                                </h2>
+                                <button 
+                                    onClick={() => sessionCompletedTasks.forEach(t => clearSessionTask(t.id))}
+                                    className="text-[10px] text-zinc-600 hover:text-zinc-400 uppercase font-bold"
+                                >
+                                    Очистить список
+                                </button>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
+                                {sessionCompletedTasks.map(task => (
+                                    <SessionTaskCard key={task.id} task={task} onDismiss={clearSessionTask} />
+                                ))}
+                            </div>
+                        </section>
+                    )}
+
+                    {/* DIVIDER */}
+                    <div className="relative py-4 w-full">
+                        <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                            <div className="w-full border-t border-zinc-800"></div>
+                        </div>
+                        <div className="relative flex justify-center">
+                            <span className="bg-zinc-950 px-3 text-xs font-bold text-zinc-600 uppercase tracking-widest flex items-center gap-2">
+                                <Layers size={12}/>
+                                Общий архив
+                            </span>
+                        </div>
+                    </div>
+
+                    {/* SECTION 2: LIBRARY GRID */}
+                    <section className="w-full">
+                        <div className="flex items-center justify-between mb-6 px-1">
+                            <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-500 flex items-center gap-2">
+                                <Database size={14} />
+                                Реестр знаний ({sortedTopics.length})
+                            </h2>
+                            <div className="flex items-center gap-2 bg-zinc-900/50 px-3 py-2 rounded-lg border border-zinc-800 w-72 hover:border-zinc-600 transition-colors focus-within:border-indigo-500/50 focus-within:ring-1 focus-within:ring-indigo-500/50">
+                                <Search size={14} className="text-zinc-500" />
+                                <input 
+                                    type="text" 
+                                    placeholder="Фильтр по темам..." 
+                                    className="bg-transparent text-xs focus:outline-none text-zinc-300 w-full placeholder:text-zinc-600"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Здесь можно оставить 4 колонки, так как архивных элементов обычно много */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
+                            {sortedTopics.map(topic => (
+                                <TopicCard
+                                    key={topic.id}
+                                    topic={topic}
+                                    onDelete={deleteTopic}
+                                    onRefresh={refreshTopic}
+                                />
+                            ))}
+                        </div>
+                    </section>
+
+                </div>
+            </main>
+
+            {/* Modal */}
+            {showNewForm && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-zinc-900 w-[480px] border border-zinc-700 shadow-2xl rounded-lg overflow-hidden animate-in zoom-in-95 duration-200">
+                        <div className="bg-zinc-800/50 px-6 py-4 border-b border-zinc-700 flex justify-between items-center">
+                            <div className="flex items-center gap-2.5">
+                                <Terminal size={16} className="text-indigo-400"/>
+                                <h3 className="text-sm font-bold uppercase tracking-wide text-white">Параметры запуска</h3>
+                            </div>
+                            <button onClick={() => setShowNewForm(false)} className="text-zinc-500 hover:text-white transition-colors"><X size={18}/></button>
+                        </div>
+                        
+                        <div className="p-6 space-y-5">
+                            <div>
+                                <label className="text-[10px] uppercase font-bold text-zinc-500 mb-2 block tracking-wider">Поисковой запрос</label>
+                                <div className="relative group">
+                                    <input
+                                        type="text"
+                                        value={newTopic}
+                                        onChange={e => setNewTopic(e.target.value)}
+                                        className="w-full bg-black border border-zinc-700 pl-4 pr-16 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 rounded-lg font-mono placeholder:text-zinc-700 transition-all"
+                                        placeholder="Введите тему исследования..."
+                                        autoFocus
+                                    />
+                                    <span className="absolute right-3 top-3.5 text-[10px] text-zinc-700 font-mono group-focus-within:text-indigo-500/50 transition-colors">INPUT</span>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label className="text-[10px] uppercase font-bold text-zinc-500 mb-2 block tracking-wider">Инструкции агента</label>
+                                <textarea
+                                    value={newDescription}
+                                    onChange={e => setNewDescription(e.target.value)}
+                                    className="w-full bg-black border border-zinc-700 p-4 text-sm text-white focus:outline-none focus:border-indigo-500 rounded-lg resize-none h-24 font-mono placeholder:text-zinc-700 transition-all"
+                                    placeholder="// Опциональные параметры контекста и фокус поиска..."
+                                />
+                            </div>
+
+                            <div className="bg-zinc-950/50 p-4 rounded-lg border border-zinc-800/50">
+                                <div className="flex justify-between text-[10px] uppercase font-bold text-zinc-500 mb-3">
+                                    <span>Глубина сканирования</span>
+                                    <span className="text-indigo-400 font-mono">{maxPages} PAGE_LIMIT</span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min={5}
+                                    max={50}
+                                    step={5}
+                                    value={maxPages}
+                                    onChange={e => setMaxPages(Number(e.target.value))}
+                                    className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-600 hover:accent-indigo-500"
+                                />
+                                <div className="flex justify-between mt-2 text-[10px] text-zinc-600 font-mono font-bold">
+                                    <span>БЫСТРО</span>
+                                    <span>ГЛУБОКО</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-zinc-800/30 px-6 py-4 border-t border-zinc-700 flex justify-end gap-3">
+                            <button onClick={() => setShowNewForm(false)} className="text-xs font-bold text-zinc-500 hover:text-zinc-300 px-4 py-2 uppercase transition-colors rounded-lg">Отмена</button>
+                            <button 
+                                onClick={handleStart} 
+                                disabled={!newTopic.trim() || isLoading}
+                                className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold uppercase tracking-wide px-5 py-2 rounded-lg disabled:opacity-50 flex items-center gap-2 transition-all shadow-lg shadow-indigo-900/20 hover:shadow-indigo-900/40"
+                            >
+                                {isLoading ? <Loader2 size={12} className="animate-spin"/> : <Play size={12} fill="currentColor"/>}
+                                {isLoading ? 'Инициализация...' : 'Запустить'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}

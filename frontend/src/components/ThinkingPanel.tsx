@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChevronDown, Loader2 } from 'lucide-react';
+import { ChevronDown, Loader2, Copy, Check } from 'lucide-react';
 import type { ConfidenceInfo } from './types';
 
 interface ThinkingIndicatorProps {
@@ -66,6 +66,104 @@ export function ThinkingIndicator({ isThinking, thinkingStartTime }: ThinkingInd
     );
 }
 
+// Step icon mapping for beautiful visualization
+const STEP_ICONS: Record<string, string> = {
+    'PLANNING': '🔍',
+    'DRAFTING': '📝',
+    'EXECUTING': '⚡',
+    'VERIFYING': '✅',
+    'CRITIQUING': '🔬',
+    'ANALYZING': '📊',
+    'RESEARCHING': '📚',
+    'THINKING': '💭',
+};
+
+interface ThinkingStepsDisplayProps {
+    steps: Array<{ name: string; content: string }>;
+    isThinking: boolean;
+}
+
+/**
+ * Beautiful live display of thinking steps with animations.
+ * UX-020: Collapsible when >3 steps
+ */
+export function ThinkingStepsDisplay({ steps, isThinking }: ThinkingStepsDisplayProps) {
+    const [expanded, setExpanded] = useState(false);
+
+    if (!isThinking || steps.length === 0) return null;
+
+    // UX-020: Show only last 3 steps unless expanded
+    const visibleSteps = expanded ? steps : steps.slice(-3);
+    const hiddenCount = steps.length - 3;
+
+    return (
+        <div className="mt-3 space-y-2 max-w-2xl">
+            {/* Show expand button if there are hidden steps */}
+            {!expanded && hiddenCount > 0 && (
+                <button
+                    onClick={() => setExpanded(true)}
+                    className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1 px-2 py-1 bg-purple-950/30 rounded-md border border-purple-500/20"
+                >
+                    <span>Показать ещё {hiddenCount} шагов</span>
+                </button>
+            )}
+
+            {visibleSteps.map((step, index) => {
+                const actualIndex = expanded ? index : steps.length - 3 + index;
+                const icon = STEP_ICONS[step.name.toUpperCase()] || '💭';
+                const isLatest = actualIndex === steps.length - 1;
+
+                return (
+                    <div
+                        key={actualIndex}
+                        className={`flex items-start gap-3 p-4 rounded-xl transition-all duration-300
+                            ${isLatest
+                                ? 'bg-gradient-to-r from-purple-950/50 to-indigo-950/50 border border-purple-500/30'
+                                : 'bg-zinc-900/30 border border-zinc-700/20 opacity-70'}
+                            animate-in fade-in slide-in-from-left-2`}
+                        style={{ animationDelay: `${index * 100}ms` }}
+                    >
+                        {/* Step icon */}
+                        <div className={`flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center
+                            ${isLatest ? 'bg-purple-500/20' : 'bg-zinc-800/50'}`}>
+                            <span className="text-xl">{icon}</span>
+                        </div>
+
+                        {/* Step content - full text visible */}
+                        <div className="flex-1 min-w-0">
+                            <div className={`text-xs font-bold uppercase tracking-wider mb-1
+                                ${isLatest ? 'text-purple-400' : 'text-zinc-500'}`}>
+                                {step.name}
+                            </div>
+                            <div className={`text-sm leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto
+                                ${isLatest ? 'text-zinc-200' : 'text-zinc-400'}`}>
+                                {step.content}
+                            </div>
+                        </div>
+
+                        {/* Live indicator for latest step */}
+                        {isLatest && (
+                            <div className="flex-shrink-0 mt-1">
+                                <div className="w-2.5 h-2.5 bg-purple-400 rounded-full animate-pulse shadow-lg shadow-purple-500/50" />
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
+
+            {/* Collapse button when expanded */}
+            {expanded && steps.length > 3 && (
+                <button
+                    onClick={() => setExpanded(false)}
+                    className="text-xs text-zinc-500 hover:text-zinc-400 flex items-center gap-1 px-2 py-1"
+                >
+                    Свернуть
+                </button>
+            )}
+        </div>
+    );
+}
+
 interface ModelLoadingIndicatorProps {
     loadingModel: string | null;
 }
@@ -97,9 +195,23 @@ interface CollapsibleThinkProps {
 
 /**
  * Collapsible panel showing AI's internal reasoning process.
+ * UX-021: Added copy button for think content
  */
 export function CollapsibleThink({ thinkContent, thinkExpanded, onToggleExpand }: CollapsibleThinkProps) {
+    const [copied, setCopied] = useState(false);
+
     if (!thinkContent) return null;
+
+    const handleCopy = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        try {
+            await navigator.clipboard.writeText(thinkContent);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } catch (err) {
+            console.error('Failed to copy:', err);
+        }
+    };
 
     return (
         <div className="mb-4 animate-in fade-in slide-in-from-top-2 duration-300">
@@ -119,8 +231,17 @@ export function CollapsibleThink({ thinkContent, thinkExpanded, onToggleExpand }
 
             {thinkExpanded && (
                 <div className="mt-2 p-4 bg-purple-950/20 border border-purple-500/10 rounded-lg
-                        animate-in fade-in slide-in-from-top-1 duration-200">
-                    <pre className="text-xs text-purple-300/70 whitespace-pre-wrap font-mono leading-relaxed max-h-48 overflow-y-auto">
+                        animate-in fade-in slide-in-from-top-1 duration-200 relative">
+                    {/* UX-021: Copy button */}
+                    <button
+                        onClick={handleCopy}
+                        className="absolute top-2 right-2 p-1.5 rounded-md bg-purple-900/30 
+                                 hover:bg-purple-900/50 text-purple-400 transition-colors"
+                        title="Скопировать"
+                    >
+                        {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+                    </button>
+                    <pre className="text-xs text-purple-300/70 whitespace-pre-wrap font-mono leading-relaxed max-h-48 overflow-y-auto pr-8">
                         {thinkContent}
                     </pre>
                 </div>
@@ -135,6 +256,7 @@ interface ConfidenceBadgeProps {
 
 /**
  * Badge showing AI's confidence level in the response.
+ * UX-022: Enhanced with gradient confidence visualization
  */
 export function ConfidenceBadge({ confidence }: ConfidenceBadgeProps) {
     if (!confidence) return null;
@@ -142,21 +264,38 @@ export function ConfidenceBadge({ confidence }: ConfidenceBadgeProps) {
     const { score, level } = confidence;
     const percent = Math.round(score * 100);
 
-    // Color based on confidence level
-    const colors = {
-        high: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-        medium: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-        low: 'bg-red-500/20 text-red-400 border-red-500/30'
+    // UX-022: Gradient colors based on exact score (not just 3 levels)
+    const getGradientColor = (s: number) => {
+        if (s >= 0.8) return 'from-emerald-500/30 to-emerald-400/10 border-emerald-500/30 text-emerald-400';
+        if (s >= 0.6) return 'from-lime-500/30 to-lime-400/10 border-lime-500/30 text-lime-400';
+        if (s >= 0.4) return 'from-yellow-500/30 to-yellow-400/10 border-yellow-500/30 text-yellow-400';
+        if (s >= 0.2) return 'from-orange-500/30 to-orange-400/10 border-orange-500/30 text-orange-400';
+        return 'from-red-500/30 to-red-400/10 border-red-500/30 text-red-400';
     };
 
-    const emoji = level === 'high' ? '🟢' : level === 'medium' ? '🟡' : '🔴';
-    const colorClass = colors[level] || colors.medium;
+    const getEmoji = (s: number) => {
+        if (s >= 0.8) return '🟢';
+        if (s >= 0.6) return '🟡';
+        if (s >= 0.4) return '🟠';
+        return '🔴';
+    };
+
+    const gradientClass = getGradientColor(score);
+    const emoji = getEmoji(score);
 
     return (
         <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium 
-                     border ${colorClass} animate-in fade-in zoom-in-95 duration-300`}>
+                     border bg-gradient-to-r ${gradientClass} animate-in fade-in zoom-in-95 duration-300`}
+            title={`Уровень уверенности: ${level} (${percent}%)`}>
             <span>{emoji}</span>
             <span>{percent}% уверен</span>
+            {/* Mini progress bar */}
+            <div className="w-12 h-1.5 bg-zinc-800 rounded-full overflow-hidden ml-1">
+                <div
+                    className="h-full bg-current transition-all duration-500"
+                    style={{ width: `${percent}%` }}
+                />
+            </div>
         </div>
     );
 }
@@ -171,6 +310,7 @@ interface ThinkingPanelProps {
     loadingModel: string | null;
     isGenerating: boolean;
     queueStatus?: 'inactive' | 'waiting' | 'acquired';
+    thinkingSteps?: Array<{ name: string; content: string }>;
 }
 
 /**
@@ -185,7 +325,8 @@ export function ThinkingPanel({
     lastConfidence,
     loadingModel,
     isGenerating,
-    queueStatus
+    queueStatus,
+    thinkingSteps = []
 }: ThinkingPanelProps) {
     return (
         <>
@@ -202,6 +343,8 @@ export function ThinkingPanel({
             {isThinking && (
                 <div className="pl-12 md:pl-14">
                     <ThinkingIndicator isThinking={isThinking} thinkingStartTime={thinkingStartTime} />
+                    {/* Live Thinking Steps */}
+                    <ThinkingStepsDisplay steps={thinkingSteps} isThinking={isThinking} />
                 </div>
             )}
 

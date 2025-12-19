@@ -10,3 +10,5 @@ export { useModels, MODEL_NAMES, THINKING_MODES } from './useModels';
 export { useMetrics } from './useMetrics';
 export { useAgent, type UseAgentOptions } from './useAgent';
 export { useUI } from './useUI';
+export { useKeyboardShortcuts, type TabType } from './useKeyboardShortcuts';
+

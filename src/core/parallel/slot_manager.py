@@ -44,7 +44,7 @@ class SlotManager:
         if not self._semaphore.locked():
             await self._semaphore.acquire()
             self._active_requests.add(request_id)
-            log.info(f"Slot acquired immediately: {request_id}")
+            log.parallel(f"Slot acquired immediately: {request_id}")
             yield "acquired"
             return
 
@@ -56,7 +56,7 @@ class SlotManager:
             request_id=request_id
         )
         heapq.heappush(self._queue, entry)
-        log.info(f"Queued: {request_id} (Pos: {len(self._queue)})")
+        log.parallel(f"Queued: {request_id} (Pos: {len(self._queue)})")
         
         # 4. Wait loop with Heartbeats
         start_wait = time.time()
@@ -88,7 +88,7 @@ class SlotManager:
             
             # 5. Acquired via Event
             self._active_requests.add(request_id)
-            log.info(f"Slot acquired from queue: {request_id}")
+            log.parallel(f"Slot acquired from queue: {request_id}")
             yield "acquired"
             
         except Exception as e:
@@ -119,7 +119,7 @@ class SlotManager:
                 except ValueError:
                     pass # Already released
             
-            log.info(f"Slot released: {request_id}")
+            log.parallel(f"Slot released: {request_id}")
 
     @property
     def active_count(self) -> int:

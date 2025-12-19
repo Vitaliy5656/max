@@ -50,3 +50,33 @@ async def set_model_selection_mode(request: ModelSelectionModeRequest):
     log.api(f"🔧 Model selection mode changed to: {request.mode}")
     
     return {"success": True, "mode": request.mode}
+
+
+# =============================================================================
+# PROVIDER SWITCHING (Phase 8: Gemini Integration)
+# =============================================================================
+
+@router.get("/provider")
+async def get_provider():
+    """Get current LLM provider (lmstudio/gemini)."""
+    return {
+        "provider": lm_client.provider,
+        "available": list(lm_client.PROVIDERS)
+    }
+
+
+@router.post("/provider")
+async def set_provider(request: dict):
+    """Set LLM provider (lmstudio/gemini)."""
+    provider = request.get("provider", "lmstudio")
+    
+    if provider not in lm_client.PROVIDERS:
+        raise HTTPException(400, f"Invalid provider. Must be one of {lm_client.PROVIDERS}")
+    
+    lm_client.provider = provider
+    
+    from src.core.logger import log
+    log.api(f"🔌 Provider switched to: {provider}")
+    
+    return {"success": True, "provider": provider}
+

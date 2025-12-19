@@ -2,6 +2,10 @@
 chcp 65001 > nul
 set PYTHONIOENCODING=utf-8
 
+:: Gemini API Configuration (Cloud AI)
+set GEMINI_API_KEY=AIzaSyDyLeouOEWajJw-XNQQq5EAm42CNir0ruo
+set GEMINI_MODEL=gemini-2.5-flash
+
 :start
 echo ===================================================
 echo    MAX AI Assistant - Auto Launch

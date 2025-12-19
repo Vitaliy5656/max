@@ -24,6 +24,9 @@ from src.core.tools import tools as tools_manager, TOOLS
 from src.core.logger import log
 from src.core.confidence import confidence_scorer
 from src.core.routing import get_smart_router, get_privacy_guard
+from src.core.dynamic_persona import dynamic_persona, feedback_loop
+from src.core.soul import soul_manager  # Soul Manager for BDI + Time Awareness
+from src.core.utils import sanitizer  # Output cleanup
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -41,6 +44,10 @@ class ChatRequest(BaseModel):
 class ConversationCreate(BaseModel):
     title: str = "Новый разговор"
 
+# UX-013: Message edit model
+class MessageEdit(BaseModel):
+    content: str
+
 # ============= Helpers =============
 
 def _log_task_exception(task: asyncio.Task):
@@ -57,6 +64,9 @@ def _log_task_exception(task: asyncio.Task):
 @router.post("/chat")
 async def chat(request: ChatRequest):
     """Chat with streaming response (SSE)."""
+    
+    # Soul Manager: Track user activity (Anti-Lag for background tasks)
+    soul_manager.touch_user_activity()
     
     # Start request tracing
     log.request_start(request.message, request.model, request.thinking_mode)
@@ -108,6 +118,9 @@ async def chat(request: ChatRequest):
     
     log.api(f"SmartRouter: intent={route.intent}, source={route.routing_source}, "
             f"prompt={route.prompt_name}, {route.routing_time_ms:.1f}ms")
+
+    # NOTE: Ensemble thinking is handled in generate() below via DEEP mode
+    # This early block was incomplete and removed to fix SyntaxError
     
     # Handle speculative responses (greetings)
     if route.speculative_response and route.intent in {"greeting", "privacy_unlock"}:
@@ -144,17 +157,17 @@ async def chat(request: ChatRequest):
     # =========================================================================
     system_prompts = []
     
-    # 0. Base Identity from external file (editable by user)
-    from pathlib import Path
-    base_prompt_path = Path(__file__).parent.parent.parent.parent / "data" / "system_prompt.txt"
-    if base_prompt_path.exists():
-        try:
-            base_prompt = base_prompt_path.read_text(encoding="utf-8").strip()
-            if base_prompt:
-                system_prompts.append(base_prompt)
-                log.api("Base system prompt loaded from file")
-        except Exception as e:
-            log.warn(f"Failed to load system_prompt.txt: {e}")
+    # 0. Dynamic Persona: Base Identity + User Rules
+    dynamic_system_prompt = await dynamic_persona.build_dynamic_prompt()
+    if dynamic_system_prompt:
+        system_prompts.append(dynamic_system_prompt)
+        log.api("Dynamic persona prompt loaded (base + user rules)")
+    
+    # 0.5. Soul Manager: Meta-Cognition Layer (Axioms + Time Awareness + Focus)
+    meta_injection = soul_manager.generate_meta_injection()
+    if meta_injection:
+        system_prompts.append(meta_injection)
+        log.api("🧠 Soul meta-cognition injected (axioms, time, focus)")
     
     # 1. SmartRouter prompt (if available, augments base prompt)
     if route.system_prompt:
@@ -254,68 +267,69 @@ async def chat(request: ChatRequest):
             t_mode = ThinkingMode.STANDARD
         
         if t_mode == ThinkingMode.DEEP:
-            log.api("🧠 Entering System 2 Cognitive Loop")
-            from src.core.cognitive.graph import build_cognitive_graph
-            from src.core.cognitive.types import CognitiveState
+            log.api("🧠 Entering Ensemble Cognitive Loop v2")
+            from src.core.cognitive.ensemble_loop import ensemble_thinking
             
             yield f"data: {json.dumps({'thinking': 'start'})}\n\n"
-            yield f"data: {json.dumps({'token': '🔄 Analyzing problem complexity...\n'})}\n\n"
-            
-            graph = build_cognitive_graph()
+            # Ensemble v2 - no initial token, stream steps instead
             profile_context = await user_profile.get_profile_summary_for_context(conv_id)
             
-            initial_state: CognitiveState = {
-                "input": request.message,
-                "conversation_id": conv_id,
-                "user_context": profile_context,
-                "plan": None,
-                "steps": [],
-                "draft_answer": "",
-                "critique": "",
-                "score": 0.0,
-                "iterations": 0,
-                "past_failures": [],
-                "thinking_tokens": []
-            }
+            # Ensemble v2 - no initial state needed, ensemble_thinking handles it
+            import asyncio as _asyncio
+            _start = _asyncio.get_event_loop().time()
             
             try:
-                final_answer = ""
-                # Use astream manual loop
-                async for event in graph.astream(initial_state):
-                    for node_name, node_state in event.items():
-                        if node_name == "__end__":
-                            continue
-                            
-                        step_name = node_state.get("step_name", node_name)
-                        step_content = node_state.get("step_content", "")
+                # Ensemble v2: stream thinking steps
+                full_response = ""
+                
+                async for event in ensemble_thinking(
+                    question=request.message,
+                    context=profile_context,
+                    question_type=route.intent,
+                ):
+                    if "thinking" in event:
+                        step_data = {
+                            "thinking": "step",
+                            "name": event.get("name", "THINKING"),
+                            "content": event.get("text", ""),
+                            "stage": event.get("stage", 0),
+                            "total": event.get("total", 0),
+                        }
+                        yield f"data: {json.dumps(step_data)}\n\n"
                         
-                        if step_name and step_content:
-                            step_data = {
-                                "thinking": "step", 
-                                "name": step_name.upper(), 
-                                "content": step_content
-                            }
-                            yield f"data: {json.dumps(step_data)}\n\n"
-                            
-                        if "draft_answer" in node_state:
-                            final_answer = node_state["draft_answer"]
-                        if "score" in node_state:
-                            score = node_state["score"]
-                        if "iterations" in node_state:
-                            iterations = node_state["iterations"]
-                            
-            except Exception as e:
-                log.error(f"Graph streaming error, falling back to invoke: {e}")
-                final_state = await graph.ainvoke(initial_state)
-                final_answer = final_state.get("draft_answer", "Error in cognitive loop")
-                score = final_state.get("score", 0.0)
-                iterations = final_state.get("iterations", 0)
+                    elif "result" in event:
+                        result = event["result"]
+                        full_answer = result.answer
+                        
+                        duration_ms = (_asyncio.get_event_loop().time() - _start) * 1000
+                        
+                        think_summary = f"Ensemble: {result.total_llm_calls} calls, Score: {result.final_score:.1f}/10"
+                        yield f"data: {json.dumps({'thinking': 'end', 'duration_ms': duration_ms, 'think_content': think_summary})}\n\n"
+                        yield f"data: {json.dumps({'token': full_answer})}\n\n"
+                        
+                        # Confidence event
+                        conf_label = "high" if result.final_score >= 7 else "medium" if result.final_score >= 5 else "low"
+                        yield f"data: {json.dumps({'confidence': {'score': result.final_score / 10, 'label': conf_label}})}\n\n"
+                        log.api(f"Ensemble complete: {result.state.value}, score={result.final_score}")
+                        
+                        full_response = full_answer
+                        return 
 
-            think_summary = f"Cognitive Loop: {iterations} iterations, Score: {score:.2f}"
-            yield f"data: {json.dumps({'thinking': 'end', 'duration_ms': 0, 'think_content': think_summary})}\n\n"
-            yield f"data: {json.dumps({'token': final_answer})}\n\n"
-            full_response = final_answer
-            return
+            except Exception as e:
+                log.error(f"Ensemble error: {e}")
+                err_msg = f"Ensemble error: {e}"
+                yield f"data: {json.dumps({'thinking': 'end', 'duration_ms': 0, 'think_content': err_msg})}\n\n"
+                
+                try:
+                    target_model = target_model or "auto"
+                    response = await lm_client.chat(messages=context, model=target_model, stream=False)
+                    fallback = response.choices[0].message.content if response.choices else "Error generating fallback"
+                    yield f"data: {json.dumps({'token': fallback})}\n\n"
+                    full_response = fallback
+                except Exception as fb_err:
+                     log.error(f"Fallback error: {fb_err}")
+                     yield f"data: {json.dumps({'error': str(fb_err)})}\n\n"
+                return
         
         # Plan Progress UI (Visual Thinking for Standard Mode)
         if route.intent in {"task", "coding", "search", "analysis"} and t_mode != ThinkingMode.DEEP:
@@ -540,8 +554,11 @@ async def chat(request: ChatRequest):
                             break
                         
                         full_response += chunk
-                        sse_data = json.dumps({'token': chunk})
-                        yield f"data: {sse_data}\n\n"
+                        # Clean stream chunk (removes only broken tokens, preserves markdown/quotes)
+                        clean_chunk = sanitizer.stream_cleaner(chunk)
+                        if clean_chunk:  # Don't send empty chunks
+                            sse_data = json.dumps({'token': clean_chunk})
+                            yield f"data: {sse_data}\n\n"
                 
                 except Exception as e:
                     log.error(f"Generate exception: {type(e).__name__}: {e}")
@@ -559,8 +576,11 @@ async def chat(request: ChatRequest):
 
             if full_response:
                 try:
+                    # Sanitize output before saving (remove model artifacts)
+                    clean_response = sanitizer.clean_output(full_response)
+                    
                     saved_msg = await memory.add_message(
-                        conv_id, "assistant", full_response,
+                        conv_id, "assistant", clean_response,
                         model_used=lm_client.current_model or "unknown"
                     )
                     log.api("Response saved to memory", msg_id=saved_msg.id)
@@ -571,6 +591,16 @@ async def chat(request: ChatRequest):
                         facts_in_context=len(context),
                         style_prompt_length=len(style_prompt) if style_prompt else 0
                     )
+                    
+                    # Dynamic Persona: Analyze feedback for rule extraction (background)
+                    feedback_task = asyncio.create_task(
+                        feedback_loop.analyze_feedback(
+                            last_user_msg=request.message,
+                            last_bot_msg=full_response,
+                            lm_client=lm_client
+                        )
+                    )
+                    feedback_task.add_done_callback(_log_task_exception)
                     
                     if not error_occurred:
                         done_data = {'done': True, 'message_id': saved_msg.id, 'conversation_id': conv_id}
@@ -649,4 +679,36 @@ async def clear_all_memory():
         return {"status": "ok", "message": "All memory cleared"}
     except Exception as e:
         log.error(f"Failed to clear memory: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# UX-013: Edit message endpoint
+@router.put("/messages/{message_id}")
+async def edit_message(message_id: int, data: MessageEdit):
+    """Edit a message's content."""
+    log.api(f"📝 Editing message {message_id}")
+    
+    try:
+        # Check message exists
+        cursor = await memory._db.execute(
+            "SELECT id, role FROM messages WHERE id = ?",
+            (message_id,)
+        )
+        row = await cursor.fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        # Update message content
+        await memory._db.execute(
+            "UPDATE messages SET content = ? WHERE id = ?",
+            (data.content, message_id)
+        )
+        await memory._db.commit()
+        
+        log.api(f"✅ Message {message_id} updated")
+        return {"status": "ok", "message_id": message_id, "content": data.content}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Failed to edit message: {e}")
         raise HTTPException(status_code=500, detail=str(e))

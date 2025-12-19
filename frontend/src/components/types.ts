@@ -4,7 +4,7 @@ export interface Message {
     id: number;
     role: 'user' | 'assistant' | 'system';
     content: string;
-    timestamp: string;
+    timestamp?: string;  // Optional to match actual usage in ChatTab
     model?: string;
 }
 

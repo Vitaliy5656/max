@@ -16,8 +16,8 @@ from openai import AsyncOpenAI
 from ..logger import log
 
 
-# Router model configuration
-ROUTER_MODEL = "bartowski/phi-3.5-mini-instruct"  # Q4_K_L quantization
+# Router model configuration - must match model_loader.py identifier
+ROUTER_MODEL = "phi-3.5-mini-instruct"  # Matches model_loader config
 
 
 class IntentType(Enum):

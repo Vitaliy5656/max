@@ -10,7 +10,8 @@
     ],
     "module": "ESNext",
     "types": [
-      "vite/client"
+      "vite/client",
+      "@react-three/fiber"
     ],
     "skipLibCheck": true,
     /* Bundler mode */
@@ -29,7 +30,8 @@
     "noUncheckedSideEffectImports": true
   },
   "include": [
-    "src"
+    "src",
+    "src/types"
   ],
   "exclude": [
     "src/test"

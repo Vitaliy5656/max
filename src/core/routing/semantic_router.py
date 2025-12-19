@@ -39,6 +39,7 @@ INTENT_THRESHOLDS: Dict[str, float] = {
     "coding": 0.82,
     "creative": 0.80,
     "math": 0.82,
+    "analysis": 0.82,        # Deep Thinking candidate
     "translation": 0.78,
     "task": 0.80,
     "psychology": 0.85,      # Important to get right

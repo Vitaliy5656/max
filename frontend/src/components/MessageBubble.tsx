@@ -1,4 +1,5 @@
 import { Copy, RotateCw, ThumbsUp, ThumbsDown, Check, Cpu } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import type { Message } from './types';
 
 interface MessageBubbleProps {
@@ -45,28 +46,36 @@ export function MessageBubble({ message, feedbackSent, onFeedback, onRegenerate,
                         : 'bg-zinc-800/80 backdrop-blur-sm border border-zinc-700/50 text-zinc-100 rounded-tl-md'
                     }
         `}>
-                    <div className={`text-[15px] leading-relaxed ${msg.role === 'user' ? 'text-white' : 'text-zinc-100'}`}>
-                        {msg.content.length > 500 ? (
-                            <details>
-                                <summary className="cursor-pointer hover:opacity-80 list-none">
-                                    {msg.content.slice(0, 500).split('\n').map((line, i) => (
-                                        <p key={i} className="mb-2 last:mb-0">{line || <br />}</p>
-                                    ))}
-                                    <span className="text-indigo-300 text-sm font-medium ml-1">
-                                        ... [Показать ещё {msg.content.length - 500} символов]
-                                    </span>
-                                </summary>
-                                <div className="mt-3 pt-3 border-t border-white/10">
-                                    {msg.content.split('\n').map((line, i) => (
-                                        <p key={i} className="mb-2 last:mb-0">{line || <br />}</p>
-                                    ))}
-                                </div>
-                            </details>
-                        ) : (
-                            msg.content.split('\n').map((line, i) => (
-                                <p key={i} className="mb-2 last:mb-0">{line || <br />}</p>
-                            ))
-                        )}
+                    <div className={`text-[15px] leading-relaxed ${msg.role === 'user' ? 'text-white' : 'text-zinc-100'} prose prose-invert prose-sm max-w-none`}>
+                        <ReactMarkdown
+                            components={{
+                                // Style inline code
+                                code: ({ children }) => (
+                                    <code className="bg-zinc-700/50 px-1.5 py-0.5 rounded text-indigo-300 text-sm">
+                                        {children}
+                                    </code>
+                                ),
+                                // Style code blocks
+                                pre: ({ children }) => (
+                                    <pre className="bg-zinc-900/80 p-3 rounded-lg overflow-x-auto my-2 border border-zinc-700/50">
+                                        {children}
+                                    </pre>
+                                ),
+                                // Style bold
+                                strong: ({ children }) => (
+                                    <strong className="font-semibold text-white">{children}</strong>
+                                ),
+                                // Style links
+                                a: ({ children, href }) => (
+                                    <a href={href} target="_blank" rel="noopener noreferrer"
+                                        className="text-indigo-400 hover:text-indigo-300 underline">
+                                        {children}
+                                    </a>
+                                ),
+                            }}
+                        >
+                            {msg.content}
+                        </ReactMarkdown>
                     </div>
                 </div>
 
@@ -90,7 +99,8 @@ export function MessageBubble({ message, feedbackSent, onFeedback, onRegenerate,
                         <button
                             onClick={() => onFeedback(msg.id, 1)}
                             aria-label="Нравится"
-                            className={`p-1.5 rounded-md transition-all duration-200 active:scale-90 ${feedbackSent[msg.id] === 'up'
+                            title="Нравится"
+                            className={`p-1.5 rounded-md transition-all duration-200 active:scale-90 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 ${feedbackSent[msg.id] === 'up'
                                 ? 'text-emerald-400 bg-emerald-500/20'
                                 : 'text-zinc-500 hover:text-emerald-400 hover:bg-zinc-800'
                                 }`}
@@ -100,7 +110,8 @@ export function MessageBubble({ message, feedbackSent, onFeedback, onRegenerate,
                         <button
                             onClick={() => onFeedback(msg.id, -1)}
                             aria-label="Не нравится"
-                            className={`p-1.5 rounded-md transition-all duration-200 active:scale-90 ${feedbackSent[msg.id] === 'down'
+                            title="Не нравится"
+                            className={`p-1.5 rounded-md transition-all duration-200 active:scale-90 focus:outline-none focus:ring-2 focus:ring-red-500/50 ${feedbackSent[msg.id] === 'down'
                                 ? 'text-red-400 bg-red-500/20'
                                 : 'text-zinc-500 hover:text-red-400 hover:bg-zinc-800'
                                 }`}

@@ -117,6 +117,31 @@ class SmartRoutingResult:
     # Context
     context_window_size: int = 10
 
+    @property
+    def is_thinking_required(self) -> bool:
+        """
+        Determine if Deep Thinking (Ensemble) is required.
+        Based on Phase 4 Dynamic Routing logic.
+        """
+        # 1. Complex intents always trigger thinking
+        if self.intent in {"coding", "math", "analysis", "psychology", "creative"}:
+            return True
+            
+        # 2. High complexity flagged by LLM router
+        if self.complexity == "high":
+            return True
+            
+        # 3. Medium complexity with low confidence (uncertainty)
+        if self.complexity == "medium" and self.confidence < 0.8:
+            return True
+            
+        # 4. Unknown intent (fallback)
+        if self.intent == "general" and len(self.system_prompt or "") < 10:
+            # Heuristic: if no system prompt and general, maybe think?
+            pass
+            
+        return False
+
 
 @dataclass
 class RoutingTrace:
@@ -261,14 +286,14 @@ class SmartRouter:
             return result
         
         # =========================================
-        # Layer 4: LLM Router (~400ms with timeout)
+        # Layer 4: LLM Router (wait for actual response)
         # =========================================
         
         try:
-            llm_result = await asyncio.wait_for(
-                llm_router.route(message),
-                timeout=0.5  # Strict 500ms budget
-            )
+            # No artificial timeout - wait for LLM to actually respond
+            # The LLM client has its own internal timeout (10s default)
+            log.debug("Waiting for LLM Router...")
+            llm_result = await llm_router.route(message)
             
             result = self._build_result_from_llm(llm_result, message)
             result.routing_time_ms = (time.perf_counter() - start) * 1000
@@ -296,8 +321,6 @@ class SmartRouter:
             
             return result
             
-        except asyncio.TimeoutError:
-            log.warn("LLM Router timeout, falling back to CPU")
         except Exception as e:
             log.warn(f"LLM Router error: {e}, falling back to CPU")
         
@@ -403,16 +426,22 @@ class SmartRouter:
         """Build result from CPU routing decision."""
         intent = decision.intent.value if hasattr(decision.intent, 'value') else str(decision.intent)
         
+        # 🛡️ FIX: Select prompt from library (was missing, causing prompt=None!)
+        prompt = get_prompt_library().select(intent=intent, message=message)
+        
         return SmartRoutingResult(
             intent=intent,
             complexity="medium",
             confidence=0.6,  # Lower confidence for CPU fallback
-            temperature=TEMPERATURE_MAP.get(intent, 0.7),
+            temperature=prompt.temperature or TEMPERATURE_MAP.get(intent, 0.7),
             use_rag=intent not in SKIP_RAG_INTENTS,
             streaming_strategy="immediate",
             safety_level=self._assess_safety(message),
             private_mode_active=self._private_mode,
-            routing_source="cpu"
+            routing_source="cpu",
+            prompt_id=prompt.id,
+            prompt_name=prompt.name,
+            system_prompt=prompt.system_prompt
         )
     
     def _assess_safety(self, message: str) -> str:

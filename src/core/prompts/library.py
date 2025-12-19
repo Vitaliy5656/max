@@ -58,9 +58,9 @@ BUILTIN_PROMPTS: List[Prompt] = [
         name="MAX Assistant",
         icon="🤖",
         category=PromptCategory.SYSTEM,
-        system_prompt="Ты MAX - интеллектуальный ассистент. Отвечай полезно и по делу.",
-        intents=["*"],  # Matches all
-        priority=-1  # Fallback
+        system_prompt="",  # Empty — identity comes from Soul Manager's Iron Mask
+        intents=["greeting", "chitchat", "question", "*"],  # Preferred for casual
+        priority=100  # HIGH priority for default identity
     ),
     
     # Personas
@@ -124,6 +124,8 @@ BUILTIN_PROMPTS: List[Prompt] = [
     ),
     
     # Domain experts
+    # NOTE: Domain prompts ONLY activate when topic or keywords match!
+    # They have priority=15, but select() now requires topic/keyword match for DOMAIN category.
     Prompt(
         id="astronomy_expert",
         name="Астроном",
@@ -136,7 +138,7 @@ BUILTIN_PROMPTS: List[Prompt] = [
         topics=["astronomy", "space", "physics"],
         keywords=["звезда", "планета", "галактика", "космос", "телескоп", 
                   "чёрная дыра", "спутник", "орбита", "NASA", "SpaceX"],
-        priority=15
+        priority=15  # Only applies if topic/keyword matches
     ),
     
     Prompt(
@@ -255,10 +257,24 @@ class PromptLibrary:
                 continue
             
             score = 0
+            has_domain_match = False  # Track if domain prompt has relevant match
             
             # Topic match (highest priority)
             if topic and topic in prompt.topics:
                 score += 100
+                has_domain_match = True
+            
+            # Keyword match (important for domain activation)
+            if prompt.keywords:
+                matched_kw = sum(1 for kw in prompt.keywords if kw in message_lower)
+                if matched_kw > 0:
+                    score += matched_kw * 10
+                    has_domain_match = True
+            
+            # 🛡️ DOMAIN FILTER: Domain prompts ONLY activate with topic/keyword match
+            # This prevents "Астроном" from hijacking "Привет" greetings
+            if prompt.category == PromptCategory.DOMAIN and not has_domain_match:
+                continue  # Skip domain prompts without relevant context
             
             # Intent match
             if intent:
@@ -266,11 +282,6 @@ class PromptLibrary:
                     score += 50
                 elif "*" in prompt.intents:
                     score += 1  # Fallback match
-            
-            # Keyword match
-            if prompt.keywords:
-                matched_kw = sum(1 for kw in prompt.keywords if kw in message_lower)
-                score += matched_kw * 10
             
             # Add priority
             score += prompt.priority

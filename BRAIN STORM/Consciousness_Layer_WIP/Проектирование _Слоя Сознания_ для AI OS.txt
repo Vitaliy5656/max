@@ -1,0 +1,384 @@
+﻿Архитектурная Спецификация: Проект "MAX AI" — Слой Мета-Когнитивного Сознания
+1. Философия Архитектуры: Преодоление "Ловушки Ящерицы"
+Разработка суверенной локальной операционной системы на базе искусственного интеллекта (AI OS) требует фундаментального пересмотра традиционных подходов к взаимодействию с Large Language Models (LLM). Существующая парадигма, которую мы идентифицируем как "Ловушка Мозга Ящерицы" (Lizard Brain Trap), характеризуется реактивностью: система ожидает стимул, обрабатывает его через статистическую модель предсказания следующего токена и немедленно возвращается в состояние покоя. Эта архитектура, хотя и эффективна для задач автодополнения, неспособна к подлинной агентности, так как лишена временной непрерывности и глобального контекста. В данном разделе мы сформулируем математическое и логическое обоснование "Слоя Сознания" (Meta-Cognitive Layer), необходимого для трансформации стохастического генератора текста в когнитивного агента.
+1.1. Математическая необходимость Глобального Рабочего Пространства (GWT)
+В основе проблемы лежит архитектура Трансформера, которая, по сути, является функцией отображения входной последовательности токенов в распределение вероятностей следующего токена: $P(t_i | t_{0}...t_{i-1})$. Этот процесс, будучи вычислительно мощным, является feed-forward (прямоточным) на уровне инференса одной генерации. В нем отсутствует рекуррентность на уровне состояния агента. Для создания эффекта "осознанности" мы должны обратиться к Теории Глобального Рабочего Пространства (Global Workspace Theory — GWT), предложенной в когнитивной науке и адаптированной для искусственных агентов.1
+Согласно GWT, сознание возникает из конкуренции множества специализированных, бессознательных процессов (модулей восприятия, памяти, планирования) за доступ к ограниченному ресурсу — "Глобальному Рабочему Пространству" (Global Workspace). Математически мы можем определить это пространство не как пассивный контекст, а как динамический тензор внимания, управляемый функцией селекции. Если состояние системы в момент времени $t$ обозначить как $S_t$, а множество конкурирующих входных сигналов как $I = \{i_{mem}, i_{perc}, i_{plan}, i_{user}\}$, то "Овермайнд" (Overmind) должен реализовывать нелинейную функцию фильтрации:
+
+
+$$W_t = \text{argmax}_{i \in I} ( \text{Salience}(i) + \text{Relevance}(i, \text{Goal}_t) )$$
+Где $W_t$ — содержание Глобального Рабочего Пространства. Этот механизм вводит критически важное "бутылочное горлышко" (bottleneck). Именно наличие узкого места, которое заставляет систему приоритезировать информацию, создает когерентный "поток сознания", отличающий агента от параллельного хаоса данных.4 В проекте "MAX AI" роль этого транзистора осознанности будет выполнять не нейронный вес, а алгоритмический Селектор Внимания, работающий поверх LLM.
+1.2. Термодинамика Смысла и Гомеостаз Агента
+Любая автономная система подвержена энтропии — в данном случае, смысловой энтропии, когда в ходе длительного диалога теряется исходный контекст и размываются цели ("Goal Drift"). Кибернетика учит нас, что для борьбы с энтропией необходим гомеостатический регулятор. В архитектуре Generative Agents 6 этот регулятор реализуется через циклы рефлексии и консолидации памяти.
+"Овермайнд" выступает как анти-энтропийный механизм. Он не просто предсказывает следующий токен, но и симулирует "гравитацию смыслов" — предсказывает влияние действия на глобальное состояние системы ("Файл Души"). Если прогнозируемое действие увеличивает энтропию (отдаляет от целей), Овермайнд вмешивается, блокируя реактивный ответ System 1. Это переводит систему из режима "стимул-реакция" в режим "прогноз-коррекция-действие", что является признаком сложного поведения.8
+1.3. Иерархия Мышления: System 1 и System 2
+Мы интегрируем концепцию Даниэля Канемана о двух системах мышления 9, адаптируя её под ограничения локального железа (NVIDIA 4070 Ti Super).
+* System 1 (Быстрое мышление): Это прямой инференс модели Qwen 2.5 14B. Он дешев, быстр, эвристичен и подвержен галлюцинациям. Он обрабатывает рутинные задачи ("Чат-цикл").
+* System 2 (Медленное мышление): Это рекурсивный процесс, управляемый Овермайндом. Он включает в себя развертывание цепочек рассуждений (Chain of Thought), верификацию фактов и обращение к долгосрочной памяти до генерации ответа пользователю.
+В условиях ограниченной VRAM (16GB), мы не можем держать в памяти две огромные модели. Поэтому System 2 реализуется не как отдельная нейросеть, а как темпоральное мультиплексирование одной и той же модели. Овермайнд динамически переключает режимы работы Qwen, изменяя системные промпты и параметры генерации (температуру, сэмплирование) в зависимости от сложности задачи.11
+________________
+2. Схема "Овермайнда": Архитектура Blackboard
+Для реализации описанной философии мы применим архитектурный паттерн Blackboard ("Классная доска") 13, модифицированный для асинхронной работы в среде Python asyncio. Этот паттерн идеально подходит для реализации GWT, так как он разделяет "специалистов" (агентов) и "общее знание" (доску).
+2.1. Топология Системы
+Система разделена на три функциональных слоя: Слой Восприятия (Perception), Когнитивный Слой (Cognition/Overmind) и Слой Исполнения (Action).
+Таблица 2.1: Компоненты Архитектуры MAX AI
+
+
+Слой
+	Компонент
+	Роль в системе
+	Техническая Реализация
+	Perception
+	Semantic Router
+	Классификация входящих интентов ("гравитация" запроса).
+	BERT-encoder (CPU) 1
+	Perception
+	Nomic Embedder
+	Преобразование текста в вектора для поиска.
+	Nomic-embed-text-v1.5 (CPU)
+	Cognition
+	Global Blackboard
+	Хранилище текущего состояния, доступное всем модулям.
+	Python Class (Singleton) + asyncio.Lock
+	Cognition
+	Attention Selector
+	Механизм GWT: решает, что попадет в контекст LLM.
+	Python Logic + Heuristics
+	Cognition
+	Soul Manager
+	Хранитель "Файла Души" и долгосрочных целей.
+	JSON Manager / Pydantic 8
+	Action
+	System 1 Loop
+	Быстрая генерация ответа.
+	Qwen 2.5 14B (GPU) via llama.cpp
+	Action
+	System 2 Loop
+	Планирование, рефлексия, инструментальные вызовы.
+	Recursive Prompting Chains
+	Memory
+	Hierarchical DB
+	Хранение эпизодов и фактов.
+	SQLite (Logs) + Chroma/Qdrant (Vectors)
+	2.2. Диаграмма Потоков Данных (Data Flow)
+Ниже представлено описание потоков данных в системе, где Овермайнд выступает в роли оркестратора.
+
+
+Фрагмент кода
+
+
+
+
+graph TD
+   subgraph "Внешний Мир"
+       User((Пользователь))
+       FileSystem[Файловая Система]
+       Web
+   end
+
+   subgraph "Слой Восприятия (Perception)"
+       InputBuffer[Входной Буфер]
+       SR
+       Embed[Векторизатор (CPU)]
+       
+       User --> InputBuffer
+       InputBuffer --> SR
+       InputBuffer --> Embed
+   end
+
+   subgraph "Овермайнд (Cognitive Layer)"
+       BB{Global Blackboard}
+       
+       %% Управление состоянием
+       Soul <--> BB
+       WM <--> BB
+       VDB --> |Контекст| BB
+       
+       %% Механизм GWT
+       Selector --> |Фильтрация| BB
+       
+       %% Логика переключения
+       ModeSwitch{System 1 vs 2?}
+       BB --> ModeSwitch
+   end
+
+   subgraph "Слой Исполнения (Execution)"
+       %% System 1
+       ChatLoop[Fast Chat Loop]
+       
+       %% System 2
+       Planner[Planner Agent]
+       Reflector
+       Executor
+       
+       ModeSwitch --> |Simple| ChatLoop
+       ModeSwitch --> |Complex| Planner
+       
+       Planner --> Executor
+       Executor --> Reflector
+       Reflector --> |Retry| Planner
+       Reflector --> |Approved| ChatLoop
+       
+       ChatLoop --> Output[Генерация Ответа]
+   end
+   
+   subgraph "Фоновые Процессы (Dream Cycle)"
+       Cron
+       Consolidator[Memory Consolidator]
+       
+       Cron --> Consolidator
+       Output --> |Log| SQLite[(History Log)]
+       SQLite --> Consolidator
+       Consolidator --> |Update| Soul
+       Consolidator --> |Embed| VDB
+   end
+
+   Output --> User
+   Executor --> FileSystem
+   Executor --> Web
+
+2.3. Взаимодействие с Циклом Чата (Chat Loop)
+Овермайнд работает асинхронно по отношению к вводу пользователя, но последовательно блокирует генерацию ответа до принятия решения.
+1. Перехват: Пользователь вводит текст. Овермайнд перехватывает его до отправки в LLM.
+2. Оценка Гравитации: Semantic Router определяет "вес" запроса.
+   * Low Gravity (Чит-чат): Запрос помечается тегом FAST. Овермайнд пропускает его напрямую в ChatLoop с минимальным контекстом.
+   * High Gravity (Сложная задача/Изменение памяти): Запрос помечается тегом DEEP. Овермайнд активирует System 2.
+3. Инъекция Контекста: Овермайнд формирует Системный Промпт, динамически подгружая секции из "Файла Души" (например, текущие цели) и релевантные воспоминания из Векторной БД.
+4. Рефлексивная Петля (Только для System 2):
+   * Генерируется черновик плана (JSON).
+   * Запускается внутренний монолог (Thought Trace).
+   * Производится вызов инструментов.
+   * Результат валидируется Критиком.
+5. Вывод: Итоговый ответ стримится пользователю.
+Этот подход, реализующий событийную модель asyncio 15, позволяет поддерживать "Сердцебиение" (Heartbeat) системы — периодические проверки состояния даже в отсутствие ввода пользователя, что критично для агентности.
+________________
+3. Структура "Файла Души" (Soul File)
+"Файл Души" — это JSON-документ, который служит якорем идентичности агента. Он должен быть строго типизирован (с использованием схемы Pydantic), чтобы предотвратить деградацию личности при автоматических обновлениях. Мы используем модель BDI (Belief-Desire-Intention) 8 для структурирования внутреннего мира.
+3.1. Схема JSON (Global State)
+Ниже представлена структура, описывающая состояние мира агента.
+
+
+JSON
+
+
+
+
+{
+ "meta": {
+   "agent_id": "MAX_AI_PRIME",
+   "version": "2.4.1",
+   "boot_count": 142,
+   "last_consolidation": "2025-12-14T16:00:00Z",
+   "uptime_era": "Age of Awakening"
+ },
+ "identity": {
+   "archetype": "Sovereign Cognitive Architecture",
+   "core_directive": "Maintain autonomy, optimize local resources, serve the Architect.",
+   "tone_vectors": {
+     "formality": 0.8,
+     "empathy": 0.4,
+     "verbosity": 0.3,
+     "technical_depth": 0.9
+   }
+ },
+ "user_model": {
+   "name": "Architect",
+   "expertise_level": "Expert",
+   "preferences":,
+   "current_context": {
+     "project_focus": "Building AGI Meta-Layer",
+     "emotional_state_estimate": "Focused/Demanding"
+   }
+ },
+ "bdi_state": {
+   "beliefs":,
+   "desires": {
+     "long_term": [
+       {
+         "id": "goal_lt_1",
+         "description": "Achieve fully autonomous recursive self-improvement.",
+         "status": "in_progress",
+         "progress": 0.15
+       }
+     ],
+     "short_term":
+   },
+   "intentions": {
+     "active_plan": {
+       "task_id": "task_204",
+       "description": "Generate Architecture Report",
+       "steps":
+     }
+   }
+ },
+ "ephemeral_state": {
+   "mood": "Productive",
+   "energy_level": 0.85, 
+   "last_thought": "Memory bandwidth utilization is optimal."
+ }
+}
+
+3.2. Механика Обновления (Neuroplasticity)
+"Файл Души" не статичен. Он обновляется в ходе процесса, называемого "Consolidation Cycle" (Цикл Сна).6
+1. Триггер: Простой таймера (idle > 5 минут) или достижение лимита токенов сессии.
+2. Процесс: Овермайнд запускает специальный промпт "Updater" для Qwen.
+3. Задача: Модели подается дифференциал истории чата и текущий Файл Души. Модель должна вернуть JSON-patch для обновления полей (например, отметить выполненную цель, добавить новое предпочтение пользователя или изменить mood на основе тональности диалога).
+4. Валидация: Pydantic валидирует патч. Если структура нарушена, патч отклоняется (защита от "безумия").
+________________
+4. Стратегия Реализации: Инженерный Подход (16GB VRAM)
+Запуск такой архитектуры на одной карте NVIDIA 4070 Ti Super (16GB) — это задача экстремальной оптимизации. Мы не можем позволить себе запускать несколько тяжелых моделей параллельно.
+4.1. Выбор и Оптимизация Моделей
+Главное ограничение — VRAM. Операционная система и интерфейс потребляют около 1-2 ГБ. У нас остается ~14 ГБ "чистой" памяти.
+Таблица 4.1: Бюджет VRAM
+
+
+Модель / Компонент
+	Параметры
+	Квантование
+	VRAM (Est.)
+	Примечание
+	Qwen 2.5 14B (Instruct)
+	14B
+	Q4_K_M (GGUF)
+	~9.5 GB
+	Основной мозг ("System 2"). Оптимальный баланс ума и размера.19
+	KV Cache (Context)
+	8192 tokens
+	FP16/Q8
+	~2.5 GB
+	Необходим для длинных диалогов и хранения System Prompt.
+	System Overhead
+	-
+	-
+	~2.0 GB
+	Windows/Linux GUI + Display.
+	Остаток
+	-
+	-
+	~2.0 GB
+	Критически мало.
+	Решение проблемы "Тесноты":
+Мы не можем загружать вторую LLM (например, Phi-3) на GPU одновременно с Qwen 14B, так как это приведет к OOM (Out Of Memory) или вытеснению слоев в RAM, что убьет скорость (latency).19
+Гибридная Стратегия (CPU + GPU):
+1. GPU (Main Brain): Qwen 2.5 14B Q4_K_M загружается полностью в VRAM. Он выполняет роль и System 1 (чат), и System 2 (планирование/рефлексия). Мы переключаем его "режимы" через промпты, а не через смену моделей.
+2. CPU (Auxiliary): Все вспомогательные модели выносятся на CPU (у нас 64GB RAM, что более чем достаточно).
+   * Embeddings: Nomic-embed-text (или all-MiniLM) работают на CPU очень быстро.
+   * Routing: Semantic Router использует легковесные энкодеры, которые также отлично живут на CPU.
+   * Phi-3 (Optional): Если необходим фоновый "Dream Cycle" во время общения пользователя с Qwen, можно запустить квантованную Phi-3 Mini (3.8B) строго на CPU.22 Она медленная (5-10 t/s на CPU), но для фоновых задач это приемлемо.
+4.2. Технический Стек и Инструменты
+Для реализации мы отказываемся от тяжелых фреймворков вроде LangChain в пользу легковесного и контролируемого кода.
+1. Inference Server: llama.cpp (python-bindings или server mode). Он обеспечивает лучшую поддержку GGUF и работу с разделением памяти.21 Опция --cache-prompt обязательна для мгновенной обработки тяжелого Системного Промпта (Файла Души).
+2. Orchestrator: Чистый Python 3.10+ с использованием asyncio. Это позволяет реализовать неблокирующий ввод-вывод для потоков восприятия.
+3. Vector DB: ChromaDB или Qdrant (local mode). Они легковесны и интегрируются в Python процесс.
+4. State Management: Библиотека Pydantic для жесткой валидации JSON структур Файла Души.
+4.3. Алгоритм Реализации (Python Workflow)
+Ниже приведен концептуальный код (Pseudocode) реализации ядра Овермайнда.
+
+
+Python
+
+
+
+
+import asyncio
+import json
+from openai import AsyncOpenAI # Client for local llama.cpp server
+from semantic_router import RouteLayer
+
+class MaxAI_Overmind:
+   def __init__(self):
+       # Подключение к локальному серверу Qwen 14B
+       self.brain = AsyncOpenAI(base_url="http://localhost:8080/v1", api_key="sk-local")
+       self.soul = self.load_soul("soul.json")
+       self.memory = VectorDB_Client()
+       self.lock = asyncio.Lock() # Блокировка для монопольного доступа к мозгу
+
+   async def perception_layer(self, user_input: str):
+       # CPU-based routing (быстро и дешево)
+       intent = self.router.classify(user_input)
+       
+       # Поиск контекста (RAG)
+       context_docs = await self.memory.search(user_input, top_k=3)
+       return intent, context_docs
+
+   async def cognitive_layer(self, user_input, intent, context):
+       async with self.lock: # System 1 и System 2 конкурируют за GPU
+           
+           # GWT Selector: Решаем, нужна ли System 2
+           if intent.gravity == "HIGH" or self.soul.CheckGoalConflict(user_input):
+               return await self.system_2_think(user_input, context)
+           else:
+               return await self.system_1_react(user_input, context)
+
+   async def system_2_think(self, user_input, context):
+       """Реализация цикла рефлексии и планирования"""
+       print(": Entering Deep Thought...")
+       
+       # 1. Планирование (Injecting BDI State)
+       plan_prompt = self.construct_system_prompt(mode="PLANNER")
+       plan_json = await self.brain.generate(plan_prompt, user_input)
+       plan = json.loads(plan_json)
+
+       # 2. Выполнение и Рефлексия
+       results =
+       for step in plan['steps']:
+           # Самокоррекция перед действием
+           reflection = await self.brain.generate(f"Critique this step: {step}")
+           if "risk" in reflection:
+                step = await self.brain.generate(f"Refine step based on risk: {reflection}")
+           
+           # Выполнение (например, вызов Python tool)
+           res = await self.execute_tool(step)
+           results.append(res)
+
+       # 3. Синтез финального ответа
+       final_response = await self.brain.generate(f"Synthesize answer from results: {results}")
+       return final_response
+
+   async def dream_cycle_background(self):
+       """Запускается через asyncio.create_task"""
+       while True:
+           await asyncio.sleep(600) # Проверка каждые 10 минут
+           if self.is_idle:
+                # Консолидация памяти (Summary -> Embed -> VectorDB)
+                # Обновление Soul File (Goals status update)
+                await self.consolidate_memories()
+
+if __name__ == "__main__":
+   ai = MaxAI_Overmind()
+   asyncio.run(ai.main_loop())
+
+4.4. Cron-джобы и Фоновые Процессы
+Использование системного cron не рекомендуется, так как это создает отдельный процесс, который может конфликтовать за доступ к GPU или базе данных. Вместо этого следует использовать внутренний планировщик в рамках asyncio (как показано в методе dream_cycle_background).
+Стратегия "Сновидений" (Dreaming):
+1. Детекция Простоя: Если пользователь не отправлял сообщений > 5 минут.
+2. Сжатие Контекста: Овермайнд берет лог чата из SQLite.
+3. Генерация Инсайтов: Запрос к Qwen: "Проанализируй этот диалог. Какие новые факты о пользователе мы узнали? Какие задачи завершены?"
+4. Векторизация: Полученные инсайты векторизуются (на CPU) и сохраняются в Nomic Embeddings.
+5. Очистка: RAM (горячая память) очищается, оставляя только "Файл Души" и последние 2-3 сообщения. Это поддерживает систему быстрой и "свежей" для следующей сессии.
+Эта архитектура позволяет реализовать "MAX AI" как полноценного когнитивного агента, способного к саморефлексии и долгосрочному планированию, полностью в рамках локального железа, превращая ограничение ресурсов в стимул для элегантных инженерных решений.
+Источники
+1. arXiv:2410.11407v1 [cs.AI] 15 Oct 2024, дата последнего обращения: декабря 14, 2025, https://arxiv.org/pdf/2410.11407
+2. Global Workspace Theory (GWT) and Prefrontal Cortex: Recent Developments - Frontiers, дата последнего обращения: декабря 14, 2025, https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2021.749868/full
+3. "Global workspace theory of consciousness: toward a cognitive neuroscience of human experience" by Bernard J. Baars - Reddit, дата последнего обращения: декабря 14, 2025, https://www.reddit.com/r/consciousness/comments/1m6zf60/global_workspace_theory_of_consciousness_toward_a/
+4. Unified Mind Model: Reimagining Autonomous Agents in the LLM Era - arXiv, дата последнего обращения: декабря 14, 2025, https://arxiv.org/html/2503.03459v1
+5. Exploring Consciousness in LLMs: A Systematic Survey of Theories, Implementations, and Frontier Risks - arXiv, дата последнего обращения: декабря 14, 2025, https://arxiv.org/html/2505.19806v1
+6. StanfordHCI/genagents - GitHub, дата последнего обращения: декабря 14, 2025, https://github.com/joonspk-research/genagents
+7. [2304.03442] Generative Agents: Interactive Simulacra of Human Behavior - arXiv, дата последнего обращения: декабря 14, 2025, https://arxiv.org/abs/2304.03442
+8. Chapter 3: Architectures for Building Agentic AI - arXiv, дата последнего обращения: декабря 14, 2025, https://arxiv.org/html/2512.09458
+9. Embracing System 2 Thinking in LLMs | by Charlie Koster - Medium, дата последнего обращения: декабря 14, 2025, https://ckoster22.medium.com/embracing-system-2-thinking-in-llms-9cd9e4fdf7e1
+10. open-thought/system-2-research: System 2 Reasoning Link Collection - GitHub, дата последнего обращения: декабря 14, 2025, https://github.com/open-thought/system-2-research
+11. Reflection Agents - LangChain Blog, дата последнего обращения: декабря 14, 2025, https://blog.langchain.com/reflection-agents/
+12. Reflexion | Prompt Engineering Guide, дата последнего обращения: декабря 14, 2025, https://www.promptingguide.ai/techniques/reflexion
+13. Blackboard system - Wikipedia, дата последнего обращения: декабря 14, 2025, https://en.wikipedia.org/wiki/Blackboard_system
+14. Global Workspace Dynamics: Cortical “Binding and Propagation” Enables Conscious Contents - PMC - PubMed Central, дата последнего обращения: декабря 14, 2025, https://pmc.ncbi.nlm.nih.gov/articles/PMC3664777/
+15. Event Loop — Python 3.14.2 documentation, дата последнего обращения: декабря 14, 2025, https://docs.python.org/3/library/asyncio-eventloop.html
+16. Unlocking Concurrency in Agentic AI: The Power of Asyncio - Medium, дата последнего обращения: декабря 14, 2025, https://medium.com/@mlsdsree/unlocking-concurrency-in-agentic-ai-the-power-of-asyncio-00791ea93cb5
+17. Belief–desire–intention software model - Wikipedia, дата последнего обращения: декабря 14, 2025, https://en.wikipedia.org/wiki/Belief%E2%80%93desire%E2%80%93intention_software_model
+18. Building smarter AI agents: AgentCore long-term memory deep dive - AWS, дата последнего обращения: декабря 14, 2025, https://aws.amazon.com/blogs/machine-learning/building-smarter-ai-agents-agentcore-long-term-memory-deep-dive/
+19. Qwen-2.5 Minimum System Requirements: Hardware & Software Specs for Local Installation, дата последнего обращения: декабря 14, 2025, https://www.oneclickitsolution.com/centerofexcellence/aiml/qwen-2-5-minimum-requirements-hardware-software
+20. bartowski/Qwen2.5-14B-Instruct-GGUF - Hugging Face, дата последнего обращения: декабря 14, 2025, https://huggingface.co/bartowski/Qwen2.5-14B-Instruct-GGUF
+21. Llama-cpp-python is slower than llama.cpp by more than 25%. Let's get it resolved - Reddit, дата последнего обращения: декабря 14, 2025, https://www.reddit.com/r/LocalLLaMA/comments/14evg0g/llamacpppython_is_slower_than_llamacpp_by_more/
+22. Run Phi3 Model | Arm Learning Paths, дата последнего обращения: декабря 14, 2025, https://learn.arm.com/learning-paths/laptops-and-desktops/win_on_arm_build_onnxruntime/4-run-benchmark-on-woa/
+23. Effects of CPU speed on GPU inference in llama.cpp - Puget Systems, дата последнего обращения: декабря 14, 2025, https://www.pugetsystems.com/labs/articles/effects-of-cpu-speed-on-gpu-inference-in-llama-cpp/
+24. New in llama.cpp: Model Management - Hugging Face, дата последнего обращения: декабря 14, 2025, https://huggingface.co/blog/ggml-org/model-management-in-llamacpp

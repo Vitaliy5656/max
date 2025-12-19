@@ -44,6 +44,17 @@
 - 📄 `adaptation.py`: Система адаптации промптов на основе фидбека.
 - 📄 `self_reflection.py`: Анализ ошибок и самокоррекция.
 
+#### 🧠 Consciousness Layer (NEW 2025-12-14)
+
+- 📂 `soul/` -> (Роль: **Meta-Cognition / BDI State**).
+  - `models.py`: Pydantic schemas (SoulState, BDIState, Identity).
+  - `soul_manager.py`: Singleton с кэшированием, Time Awareness, Anti-Lag.
+  - Инъекция аксиом в System Prompt.
+- 📂 `tool_registry/` -> (Роль: **Tool Registration**).
+  - `registry.py`: Декоратор @register с авто JSON Schema.
+- 📂 `utils/` -> (Роль: **Utilities**).
+  - `sanitizer.py`: Очистка вывода от артефактов модели.
+
 ---
 
 ### � API Tier (`src/api`)

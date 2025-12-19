@@ -1,8 +1,13 @@
 /**
  * Models Hook — manages available models, selection, and modes.
+ * 
+ * FIX: Replaced hardcoded URLs with API_BASE constant.
  */
 import { useState, useCallback } from 'react';
 import * as api from '../api/client';
+
+// FIX: Use relative path to leverage Vite proxy
+const API_BASE = '/api';
 
 export const MODEL_NAMES: Record<string, string> = {
     'auto': '🧠 Auto (Smart)',
@@ -42,9 +47,10 @@ export function useModels() {
         }
     }, []);
 
+    // FIX: Use API_BASE instead of hardcoded localhost
     const loadModelSelectionMode = useCallback(async () => {
         try {
-            const response = await fetch('http://localhost:8000/api/config/model_selection_mode');
+            const response = await fetch(`${API_BASE}/config/model_selection_mode`);
             if (response.ok) {
                 const data = await response.json();
                 setModelSelectionMode(data.mode as 'manual' | 'auto');
@@ -56,22 +62,64 @@ export function useModels() {
         return 'manual';
     }, []);
 
+    // FIX: Use API_BASE and add rollback on error
     const updateModelSelectionMode = useCallback(async (mode: 'manual' | 'auto') => {
-        setModelSelectionMode(mode);
+        const previousMode = modelSelectionMode;
+        setModelSelectionMode(mode); // Optimistic update
         try {
-            await fetch('http://localhost:8000/api/config/model_selection_mode', {
+            const response = await fetch(`${API_BASE}/config/model_selection_mode`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ mode })
             });
+            if (!response.ok) {
+                // Rollback on error
+                setModelSelectionMode(previousMode);
+                console.error('Failed to update mode: Server returned', response.status);
+            }
         } catch (error) {
+            // Rollback on error
+            setModelSelectionMode(previousMode);
             console.error('Failed to update mode:', error);
         }
-    }, []);
+    }, [modelSelectionMode]);
 
     const getModelDisplayName = useCallback((model: string) => {
         return MODEL_NAMES[model] || model;
     }, []);
+
+    // ============= Provider Switching (Phase 8) =============
+    const [provider, setProvider] = useState<'lmstudio' | 'gemini'>(() => {
+        try {
+            const stored = localStorage.getItem('llm_provider');
+            return (stored === 'gemini' || stored === 'lmstudio') ? stored : 'lmstudio';
+        } catch { return 'lmstudio'; }
+    });
+
+    const loadProvider = useCallback(async () => {
+        try {
+            const data = await api.getProvider();
+            setProvider(data.provider);
+        } catch {
+            // Keep default
+        }
+    }, []);
+
+    const updateProvider = useCallback(async (newProvider: 'lmstudio' | 'gemini') => {
+        const previous = provider;
+        setProvider(newProvider); // Optimistic
+        localStorage.setItem('llm_provider', newProvider);
+        try {
+            const result = await api.setProvider(newProvider);
+            if (!result.success) {
+                setProvider(previous);
+                localStorage.setItem('llm_provider', previous);
+            }
+        } catch {
+            setProvider(previous);
+            localStorage.setItem('llm_provider', previous);
+        }
+    }, [provider]);
 
     return {
         availableModels,
@@ -87,5 +135,9 @@ export function useModels() {
         loadModelSelectionMode,
         updateModelSelectionMode,
         getModelDisplayName,
+        // Provider switching
+        provider,
+        loadProvider,
+        updateProvider,
     };
 }

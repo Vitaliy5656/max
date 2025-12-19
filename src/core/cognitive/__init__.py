@@ -1,4 +1,5 @@
-from .types import CognitiveState, CognitiveConfig
-from .graph import build_cognitive_graph
+from .ensemble_types import EnsembleState, EnsembleConfig, EnsembleResult
+from .ensemble_loop import ensemble_thinking
 
-__all__ = ['CognitiveState', 'CognitiveConfig', 'build_cognitive_graph']
+__all__ = ['EnsembleState', 'EnsembleConfig', 'EnsembleResult', 'ensemble_thinking']
+

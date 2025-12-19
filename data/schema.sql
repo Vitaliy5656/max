@@ -305,3 +305,20 @@ CREATE TABLE IF NOT EXISTS error_memory (
 
 CREATE INDEX IF NOT EXISTS idx_error_occurrences ON error_memory(occurrences DESC);
 
+-- ============================================================
+-- Dynamic Persona (User Style Rules)
+-- ============================================================
+
+-- User Preferences (Dynamic Persona rules)
+-- Explicit rules for adapting response style
+CREATE TABLE IF NOT EXISTS user_preferences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT DEFAULT 'default',
+    rule_content TEXT NOT NULL,              -- Rule text, e.g. "Отвечай короче"
+    source TEXT DEFAULT 'manual',            -- 'manual', 'feedback', 'llm_analysis'
+    is_active BOOLEAN DEFAULT TRUE,
+    weight FLOAT DEFAULT 1.0,                -- Priority of the rule
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_prefs_active ON user_preferences(user_id, is_active);

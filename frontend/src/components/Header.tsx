@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect } from 'react';
 import { Search, ChevronDown, Check, Sun, Moon, Menu, Trash2 } from 'lucide-react';
 import type { ThinkingModeConfig } from './types';
 
@@ -240,6 +240,23 @@ export function Header({
                         }
                     }}
                 />
+
+                {/* UX-017: Backup Status Indicator */}
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-zinc-900/50" title={
+                    backupStatus === 'synced' ? 'Синхронизировано' :
+                        backupStatus === 'syncing' ? 'Синхронизация...' :
+                            backupStatus === 'error' ? 'Ошибка синхронизации' : 'Не подключено'
+                }>
+                    <div className={`w-2 h-2 rounded-full ${backupStatus === 'synced' ? 'bg-green-500' :
+                            backupStatus === 'syncing' ? 'bg-yellow-500 animate-pulse' :
+                                backupStatus === 'error' ? 'bg-red-500' : 'bg-zinc-600'
+                        }`} />
+                    <span className="text-[10px] text-zinc-500 hidden sm:inline">
+                        {backupStatus === 'synced' ? 'Sync' :
+                            backupStatus === 'syncing' ? '...' :
+                                backupStatus === 'error' ? 'Err' : '—'}
+                    </span>
+                </div>
 
                 <IconButton
                     icon={darkMode ? <Sun size={18} /> : <Moon size={18} />}

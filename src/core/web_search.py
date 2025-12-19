@@ -15,18 +15,15 @@ import httpx
 from bs4 import BeautifulSoup
 
 # P2 fix: Handle both old and new package names for DuckDuckGo search
+# Try new package name first to avoid deprecation warning
 try:
-    from duckduckgo_search import DDGS
+    from ddgs import DDGS
 except ImportError:
     try:
-        from ddgs import DDGS
+        from duckduckgo_search import DDGS
     except ImportError:
         DDGS = None
-        # Don't import log here to avoid issues at module level if circular, 
-        # but print is robust for warning on import fail. 
-        # Let's import inside the except block to be safe or use print as fallback? 
-        # Actually logger.py is safe.
-        print("Warning: DuckDuckGo search not available. Install: pip install duckduckgo-search")
+        print("Warning: DuckDuckGo search not available. Install: pip install ddgs")
 
 
 @dataclass
@@ -39,7 +36,7 @@ class SearchResult:
     confidence: float = 1.0  # URL validation confidence (0.0 - 1.0)
     
 
-class WebSearcher:
+class WebSearchTool:
     """
     Web search using DuckDuckGo.
     No API key required.
@@ -181,4 +178,4 @@ class WebSearcher:
 
 
 # Global web searcher
-web_searcher = WebSearcher()
+web_searcher = WebSearchTool()

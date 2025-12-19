@@ -18,6 +18,7 @@ interface ChatWindowProps {
     onToggleThinkExpand: () => void;
     lastConfidence: ConfidenceInfo | null;
     loadingModel: string | null;
+    thinkingSteps?: Array<{ name: string; content: string }>;
 }
 
 /**
@@ -36,7 +37,8 @@ export function ChatWindow({
     thinkExpanded,
     onToggleThinkExpand,
     lastConfidence,
-    loadingModel
+    loadingModel,
+    thinkingSteps = []
 }: ChatWindowProps) {
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -69,6 +71,7 @@ export function ChatWindow({
                     lastConfidence={lastConfidence}
                     loadingModel={loadingModel}
                     isGenerating={isGenerating}
+                    thinkingSteps={thinkingSteps}
                 />
 
                 {/* Show simple generating indicator when generating but not thinking */}

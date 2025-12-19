@@ -468,6 +468,7 @@ class LMStudioClient:
 
         if stream:
             # P0 Fix: Wrap streaming with SlotManager
+            from .parallel import SlotPriority
             return self._stream_with_slots(params, priority=SlotPriority.STANDARD)
         else:
             # P2 fix: Apply rate limiting AND SlotManager
@@ -837,17 +838,150 @@ class LMStudioClient:
         return "Maximum iterations reached."
     
     async def get_embedding(self, text: str) -> list[float]:
-        """Get embedding vector for text."""
+        """Get embedding vector for text using configured model."""
         try:
+            # Use dedicated embedding model from config
+            embedding_model = config.memory.embedding_model
+            
             response = await self.client.embeddings.create(
-                model="text-embedding-model",  # LM Studio embedding model
+                model=embedding_model,
                 input=text
             )
             return response.data[0].embedding
-        except Exception:
-            # Silent fail - embeddings are optional, system uses keyword fallback
+        except Exception as e:
+            # Log the error for debugging - embeddings are critical for Brain Map
+            log.warn(f"⚠️ Embedding generation failed: {e}. Facts will be saved without embedding.")
             return []
 
 
-# Global client instance
-lm_client = LMStudioClient()
+# =============================================================================
+# UNIFIED CLIENT WITH PROVIDER SWITCHING
+# =============================================================================
+
+class UnifiedLMClient:
+    """
+    Unified LM Client with provider switching.
+    
+    Supports:
+    - LM Studio (local, private)
+    - Gemini (cloud, fast)
+    """
+    
+    PROVIDERS = ("lmstudio", "gemini")
+    
+    def __init__(self):
+        self._lmstudio = LMStudioClient()
+        self._gemini = None  # Lazy init
+        self._provider = config.default_provider
+        log.api(f"UnifiedLMClient initialized with provider: {self._provider}")
+    
+    @property
+    def provider(self) -> str:
+        """Current active provider."""
+        return self._provider
+    
+    @provider.setter
+    def provider(self, value: str):
+        """Set active provider."""
+        if value not in self.PROVIDERS:
+            raise ValueError(f"Invalid provider: {value}. Must be one of {self.PROVIDERS}")
+        self._provider = value
+        log.api(f"Provider switched to: {value}")
+    
+    @property
+    def current_model(self) -> Optional[str]:
+        """Get current model from active provider."""
+        if self._provider == "gemini":
+            return config.gemini.model
+        return self._lmstudio.current_model
+    
+    def _get_gemini(self):
+        """Lazy init Gemini provider."""
+        if self._gemini is None:
+            try:
+                from .lm.providers.gemini import GeminiProvider
+                self._gemini = GeminiProvider()
+            except Exception as e:
+                log.error(f"Failed to init Gemini: {e}")
+                raise
+        return self._gemini
+    
+    async def chat(
+        self,
+        messages: list[dict],
+        model: Optional[str] = None,
+        stream: bool = True,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        thinking_mode: ThinkingMode = ThinkingMode.STANDARD,
+        has_image: bool = False,
+        **kwargs
+    ) -> AsyncIterator[str] | str:
+        """
+        Send chat request to active provider.
+        """
+        if self._provider == "gemini":
+            try:
+                gemini = self._get_gemini()
+                return await gemini.chat(
+                    messages=messages,
+                    stream=stream,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    **kwargs
+                )
+            except Exception as e:
+                log.error(f"Gemini failed, falling back to LM Studio: {e}")
+                # Fallback to LM Studio
+                self._provider = "lmstudio"
+        
+        # LM Studio
+        return await self._lmstudio.chat(
+            messages=messages,
+            model=model,
+            stream=stream,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            thinking_mode=thinking_mode,
+            has_image=has_image,
+            **kwargs
+        )
+    
+    # Proxy methods for LM Studio specific features
+    async def get_available_models(self, force_refresh: bool = False) -> list[str]:
+        """Get available models (LM Studio only)."""
+        return await self._lmstudio.get_available_models(force_refresh)
+    
+    async def list_models(self):
+        """List loaded models (LM Studio only)."""
+        return await self._lmstudio.list_models()
+    
+    async def ensure_model_loaded(self, model: str) -> bool:
+        """Ensure model is loaded (LM Studio only)."""
+        return await self._lmstudio.ensure_model_loaded(model)
+    
+    async def get_loaded_model(self) -> Optional[str]:
+        """Get loaded model (LM Studio only)."""
+        return await self._lmstudio.get_loaded_model()
+    
+    def detect_task_type(self, message: str, has_image: bool = False) -> TaskType:
+        """Detect task type for routing."""
+        return self._lmstudio.detect_task_type(message, has_image)
+    
+    def get_mode_config(self, thinking_mode: ThinkingMode):
+        """Get thinking mode config."""
+        return self._lmstudio.get_mode_config(thinking_mode)
+    
+    async def get_embedding(self, text: str) -> list[float]:
+        """Get embedding via LM Studio (embeddings are always local)."""
+        return await self._lmstudio.get_embedding(text)
+    
+    @property
+    def client(self):
+        """Access underlying OpenAI client (for direct API calls)."""
+        return self._lmstudio.client
+
+
+# Global client instance (now unified)
+lm_client = UnifiedLMClient()
+

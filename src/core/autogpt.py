@@ -21,6 +21,7 @@ import aiosqlite
 from .config import config
 from .lm_client import lm_client, TaskType
 from .tools import tools, TOOLS, DANGEROUS_TOOLS
+from .logger import log
 
 
 class RunStatus(Enum):
@@ -286,7 +287,7 @@ class AutoGPTAgent:
                     for t in plan_data.get("tasks", [])
                 ]
         except Exception as e:
-            print(f"Plan creation error: {e}")
+            log.warn(f"Plan creation error: {e}")
             # Issue #7 fix: Create 3-step plan for better progress visibility
             run.plan = [
                 Task(description=f"Анализ задачи: {run.goal[:50]}..."),
@@ -357,7 +358,7 @@ class AutoGPTAgent:
 
         except (json.JSONDecodeError, ValueError) as e:
             # P1/P3 fix: Specific exception types instead of bare except
-            print(f"Action parsing warning: {e}")
+            log.warn(f"Action parsing warning: {e}")
             action_data = {
                 "action": "think",
                 "thought": response,
@@ -525,7 +526,7 @@ Verdict:"""
                 return True 
                 
         except Exception as e:
-            print(f"Verification failed: {e}")
+            log.error(f"Verification failed: {e}")
             return True # Fallback
             
         return False

@@ -9,8 +9,8 @@
 | /logic | 2025-12-14 | ⚠️ 26 ISSUES (Deep Semantic) | [log.md](logic/log.md) |
 | /check | 2025-12-13 | ✅ PROD-READY (Dependencies) | [log.md](check/log.md) |
 | /architect | 2025-12-13 | ✅ PLAN VERIFIED | [log.md](architect/log.md) |
-| /fix | 2025-12-14 | ✅ P0/P1 COGNITIVE FIXED | [log.md](fix/log.md) |
-| /UI | 2025-12-13 | ✅ AUDIT DONE (Clean) | [log.md](UI/log.md) |
+| /fix | 2025-12-15 | ✅ 19 UI ISSUES FIXED | [log.md](fix/log.md) |
+| /UI | 2025-12-15 | ⚠️ 37 ISSUES (60+ Functions Analyzed) | [log.md](UI/log.md) |
 | /optimization | 2025-12-13 | ✅ 4 WINS INTEGRATED | [log.md](optimization/log.md) |
 
 ---
@@ -27,6 +27,9 @@
 
 ## Лог Активности
 
+- [2025-12-15 18:17] /fix: ✅ **UI FULL SWEEP** — 9 issues fixed (interval leak, hardcoded URLs, error handling, memory leak, EmptyState RU, WS status).
+- [2025-12-15 18:14] /UI: ⚠️ **DETAILED FUNCTION AUDIT** — 60+ functions analyzed (7 CRITICAL, 12 UX FAIL, 18 IMPROVEMENT). Memory leaks, hardcoded URLs, broken flows.
+- [2025-12-15 18:10] /UI: ⚠️ **Chat/DeepSearch/Window Audit** — 16 issues (3 CRITICAL, 5 UX FAIL, 8 IMPROVEMENT). State persistence, WebSocket, Retry.
 - [2025-12-14 02:15] /fix: ✅ **P0/P1 CRITICAL FIXES** — 5 issues fixed (Timeout, Infinite Loop, Config, Prompts, user_context).
 - [2025-12-14 01:45] /logic: ⚠️ **DEEP SEMANTIC AUDIT** — Found 26 issues (6 Logic Lies, 5 State Bugs, 5 Lazy Impl, No Timeout, Infinite Loop Risk).
 - [2025-12-13 23:58] /logic: ⚠️ **Deep Thinking Audit** — Found 3 Logic/UX issues (Dead Interface, Loop Shortcut).

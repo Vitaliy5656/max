@@ -1,8 +1,58 @@
 /**
  * API Client for MAX AI Backend
+ * 
+ * FIX-002: API_BASE now reads from env variable
+ * FIX-003: Added retry logic for 5xx errors
+ * FIX-004: Added request timeout constant
  */
 
-const API_BASE = 'http://127.0.0.1:8000/api';
+// FIX-002: Use environment variable with fallback to relative path (Vite proxy)
+const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL)
+    || '/api';
+
+// FIX-004: Default timeout for requests (30 seconds)
+export const DEFAULT_TIMEOUT = 30000;
+
+// FIX-003: Retry utility for transient errors
+export async function fetchWithRetry(
+    url: string,
+    options: RequestInit,
+    maxRetries = 3,
+    baseDelay = 1000
+): Promise<Response> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            const response = await fetch(url, options);
+
+            // Retry on 5xx server errors
+            if (response.status >= 500 && attempt < maxRetries - 1) {
+                const delay = baseDelay * Math.pow(2, attempt);
+                console.warn(`Server error ${response.status}, retrying in ${delay}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue;
+            }
+
+            return response;
+        } catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+
+            // Only retry on network errors, not on abort
+            if (lastError.name === 'AbortError') {
+                throw lastError;
+            }
+
+            if (attempt < maxRetries - 1) {
+                const delay = baseDelay * Math.pow(2, attempt);
+                console.warn(`Network error, retrying in ${delay}ms...`, lastError.message);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+    }
+
+    throw lastError || new Error('Request failed after retries');
+}
 
 // ============= Types =============
 
@@ -83,10 +133,12 @@ export interface AgentStatus {
 
 // Thinking Event (for reasoning models like DeepSeek R1)
 export interface ThinkingEvent {
-    status: 'start' | 'end';
+    status: 'start' | 'end' | 'step';  // 'step' for intermediate thinking steps
     duration_ms?: number;
     chars_filtered?: number;
     think_content?: string;  // For Collapsible Think
+    name?: string;           // Step name (PLANNING, DRAFTING, etc.)
+    content?: string;        // Step description
 }
 
 // Confidence Event (scored after response)
@@ -103,6 +155,7 @@ export interface QueueEvent {
 }
 
 // Chat
+// P0-001 FIX: Added timeout support and proper network error handling
 export async function streamChat(
     message: string,
     conversationId?: string,
@@ -120,100 +173,163 @@ export async function streamChat(
     onQueueStatus?: (event: QueueEvent) => void,      // NEW: Queue status callback
     abortSignal?: AbortSignal
 ): Promise<void> {
-    const response = await fetch(`${API_BASE}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            message,
-            conversation_id: conversationId,
-            model,
-            temperature,
-            use_rag: useRag,
-            thinking_mode: thinkingMode,
-            has_image: hasImage,
-        }),
-        signal: abortSignal,
-    });
+    // P0-001: Create timeout controller (30 seconds)
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), DEFAULT_TIMEOUT);
 
-    if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Server Error ${response.status}: ${errText || response.statusText}`);
-    }
+    // Combine user abort signal with timeout
+    const combinedController = new AbortController();
 
-    const reader = response.body?.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+    // Listen to both signals
+    const abortHandler = () => combinedController.abort();
+    timeoutController.signal.addEventListener('abort', abortHandler);
+    abortSignal?.addEventListener('abort', abortHandler);
 
-    if (!reader) throw new Error('No response body');
+    try {
+        const response = await fetch(`${API_BASE}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message,
+                conversation_id: conversationId,
+                model,
+                temperature,
+                use_rag: useRag,
+                thinking_mode: thinkingMode,
+                has_image: hasImage,
+            }),
+            signal: combinedController.signal,
+        });
 
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        // Clear timeout since we got a response
+        clearTimeout(timeoutId);
 
-        // Decode and add to buffer
-        buffer += decoder.decode(value, { stream: true });
+        if (!response.ok) {
+            const errText = await response.text();
+            const errorMessage = `Ошибка сервера ${response.status}: ${errText || response.statusText}`;
+            onError(errorMessage);
+            throw new Error(errorMessage);
+        }
 
-        // Split by newlines, but keep the last chunk if it's incomplete
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep the last incomplete line in buffer
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || !trimmed.startsWith('data: ')) continue;
+        if (!reader) {
+            const errorMessage = 'Нет ответа от сервера';
+            onError(errorMessage);
+            throw new Error(errorMessage);
+        }
 
-            try {
-                const data = JSON.parse(trimmed.slice(6));
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-                // Handle meta events (Queue & Pulse)
-                if (data._meta) {
-                    if (data._meta === 'queue_heartbeat' && onQueueStatus) {
-                        onQueueStatus({ status: 'waiting' });
-                    } else if (data._meta === 'thinking_start' && onThinking) {
-                        onThinking({ status: 'start' });
-                    } else if (data._meta === 'thinking_end' && onThinking) {
+            // Decode and add to buffer
+            buffer += decoder.decode(value, { stream: true });
+
+            // Split by newlines, but keep the last chunk if it's incomplete
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep the last incomplete line in buffer
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+                try {
+                    const data = JSON.parse(trimmed.slice(6));
+
+                    // Handle meta events (Queue & Pulse)
+                    if (data._meta) {
+                        if (data._meta === 'queue_heartbeat' && onQueueStatus) {
+                            onQueueStatus({ status: 'waiting' });
+                        } else if (data._meta === 'thinking_start' && onThinking) {
+                            onThinking({ status: 'start' });
+                        } else if (data._meta === 'thinking_end' && onThinking) {
+                            onThinking({
+                                status: 'end',
+                                duration_ms: data.duration_ms,
+                                chars_filtered: data.chars_filtered,
+                                think_content: data.think_content
+                            });
+                        }
+                        // 'pulse' is currently just a keep-alive, no UI action needed yet
+                        // except maybe resetting a connection timeout timer if we had one.
+                        // FIX-001: Use continue instead of return to process remaining messages
+                        continue;
+                    }
+
+                    // Handle thinking events (Legacy/Direct format if backend sends it)
+                    if (data.thinking && onThinking) {
                         onThinking({
-                            status: 'end',
+                            status: data.thinking,
                             duration_ms: data.duration_ms,
                             chars_filtered: data.chars_filtered,
-                            think_content: data.think_content
+                            think_content: data.think_content,
+                            name: data.name,           // Step name (e.g., "PLANNING")
+                            content: data.content      // Step description
                         });
+                    } else if (data.confidence && onConfidence) {
+                        // Handle confidence event
+                        onConfidence({
+                            score: data.score,
+                            level: data.level,
+                            factors: data.factors
+                        });
+                    } else if (data.status === 'loading' && onLoading) {
+                        // Issue #6 fix: Handle model loading event
+                        onLoading({ model: data.model || '' });
+                    } else if (data.token) {
+                        onToken(data.token);
+                    } else if (data.error) {
+                        // Handle streaming errors from backend
+                        console.error('Stream error from backend:', data.error);
+                        onError(data.error);
+                    } else if (data.done) {
+                        onComplete(data);
                     }
-                    // 'pulse' is currently just a keep-alive, no UI action needed yet
-                    // except maybe resetting a connection timeout timer if we had one.
-                    return;
+                } catch (e) {
+                    console.warn('Failed to parse SSE message:', trimmed, e);
                 }
-
-                // Handle thinking events (Legacy/Direct format if backend sends it)
-                if (data.thinking && onThinking) {
-                    onThinking({
-                        status: data.thinking,
-                        duration_ms: data.duration_ms,
-                        chars_filtered: data.chars_filtered,
-                        think_content: data.think_content
-                    });
-                } else if (data.confidence && onConfidence) {
-                    // Handle confidence event
-                    onConfidence({
-                        score: data.score,
-                        level: data.level,
-                        factors: data.factors
-                    });
-                } else if (data.status === 'loading' && onLoading) {
-                    // Issue #6 fix: Handle model loading event
-                    onLoading({ model: data.model || '' });
-                } else if (data.token) {
-                    onToken(data.token);
-                } else if (data.error) {
-                    // Handle streaming errors from backend
-                    console.error('Stream error from backend:', data.error);
-                    onError(data.error);
-                } else if (data.done) {
-                    onComplete(data);
-                }
-            } catch (e) {
-                console.warn('Failed to parse SSE message:', trimmed, e);
             }
         }
+    } catch (error) {
+        // P0-001 & P1-001: Proper network error handling
+        clearTimeout(timeoutId);
+
+        if (error instanceof Error) {
+            if (error.name === 'AbortError') {
+                // Check if it was timeout or user abort
+                if (timeoutController.signal.aborted && !abortSignal?.aborted) {
+                    const timeoutMessage = 'Сервер не отвечает (таймаут 30 секунд). Проверьте подключение к LM Studio.';
+                    onError(timeoutMessage);
+                    throw new Error(timeoutMessage);
+                }
+                // User cancelled - re-throw without onError (handled in useChat)
+                throw error;
+            }
+
+            // Network errors (Connection Refused, etc.)
+            let userMessage = 'Ошибка сети';
+            if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                userMessage = 'Не удалось подключиться к серверу. Проверьте что backend запущен.';
+            } else if (error.message.includes('ECONNREFUSED')) {
+                userMessage = 'Сервер недоступен (Connection Refused). Запустите backend.';
+            } else {
+                userMessage = `Ошибка: ${error.message}`;
+            }
+
+            onError(userMessage);
+            throw new Error(userMessage);
+        }
+
+        const unknownError = 'Неизвестная ошибка при отправке сообщения';
+        onError(unknownError);
+        throw new Error(unknownError);
+    } finally {
+        // Cleanup listeners
+        timeoutController.signal.removeEventListener('abort', abortHandler);
+        abortSignal?.removeEventListener('abort', abortHandler);
     }
 }
 
@@ -256,6 +372,43 @@ export async function uploadDocument(file: File): Promise<Document> {
 
 export async function deleteDocument(docId: string): Promise<void> {
     await fetch(`${API_BASE}/documents/${docId}`, { method: 'DELETE' });
+}
+
+// FIX: Upload with progress callback for progress bar UI
+export function uploadDocumentWithProgress(
+    file: File,
+    onProgress: (percent: number) => void
+): Promise<Document> {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        const formData = new FormData();
+        formData.append('file', file);
+
+        xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable) {
+                const percent = Math.round((e.loaded / e.total) * 100);
+                onProgress(percent);
+            }
+        });
+
+        xhr.addEventListener('load', () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    resolve(JSON.parse(xhr.responseText));
+                } catch {
+                    reject(new Error('Invalid response'));
+                }
+            } else {
+                reject(new Error(`Upload failed: ${xhr.status}`));
+            }
+        });
+
+        xhr.addEventListener('error', () => reject(new Error('Network error')));
+        xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')));
+
+        xhr.open('POST', `${API_BASE}/documents/upload`);
+        xhr.send(formData);
+    });
 }
 
 // Templates
@@ -342,3 +495,53 @@ export async function triggerBackup(): Promise<{ success: boolean }> {
     const res = await fetch(`${API_BASE}/backup/trigger`, { method: 'POST' });
     return res.json();
 }
+
+// UX-013: Message edit
+export async function editMessage(messageId: number, content: string): Promise<{ status: string; message_id: number; content: string }> {
+    const res = await fetch(`${API_BASE}/messages/${messageId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+    });
+    if (!res.ok) {
+        throw new Error(`Failed to edit message: ${res.status}`);
+    }
+    return res.json();
+}
+
+// ============= Provider Switching (Phase 8) =============
+
+export interface ProviderInfo {
+    provider: 'lmstudio' | 'gemini';
+    available: string[];
+}
+
+export async function getProvider(): Promise<ProviderInfo> {
+    const res = await fetch(`${API_BASE}/provider`);
+    return res.json();
+}
+
+export async function setProvider(provider: 'lmstudio' | 'gemini'): Promise<{ success: boolean; provider: string }> {
+    const res = await fetch(`${API_BASE}/provider`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider }),
+    });
+    return res.json();
+}
+
+// Model Selection Mode
+export async function getModelSelectionMode(): Promise<{ mode: string }> {
+    const res = await fetch(`${API_BASE}/config/model_selection_mode`);
+    return res.json();
+}
+
+export async function setModelSelectionMode(mode: 'manual' | 'auto'): Promise<{ success: boolean; mode: string }> {
+    const res = await fetch(`${API_BASE}/config/model_selection_mode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+    });
+    return res.json();
+}
+

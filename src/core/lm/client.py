@@ -114,9 +114,23 @@ class LMStudioClient:
             return None
 
     async def get_loaded_model(self) -> Optional[str]:
-        """Get currently loaded model (API check)."""
+        """Get currently loaded MAIN model (excludes auxiliary models)."""
         try:
             models = await self.list_models()
+            if not models:
+                return None
+            
+            # 🛡️ FIX: Exclude auxiliary models (mo_guard, embeddings)
+            # These are loaded for specific purposes, not for general chat
+            auxiliary_patterns = ['mo_guard', 'embeddings', 'phi-3', 'nomic-embed', 'text-embedding']
+            
+            for model in models:
+                model_id_lower = model.id.lower()
+                is_auxiliary = any(aux in model_id_lower for aux in auxiliary_patterns)
+                if not is_auxiliary:
+                    return model.id  # Return first non-auxiliary model
+            
+            # Fallback: if only auxiliary models loaded, return first one
             return models[0].id if models else None
         except:
             return None

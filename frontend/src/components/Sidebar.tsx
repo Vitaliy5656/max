@@ -1,6 +1,6 @@
 import {
     MessageSquare, FileText, Bot, LayoutTemplate, Plus, Cpu,
-    History, ChevronRight, X, MessageCircle
+    History, ChevronRight, X, MessageCircle, Trash2
 } from 'lucide-react';
 import { DenseCore } from './DenseCore';
 import { SynapticStream } from './SynapticStream';
@@ -17,6 +17,7 @@ interface SidebarProps {
     conversationId: string | null;
     setConversationId: (id: string) => void;
     onNewConversation: () => void;
+    onDeleteConversation?: (id: string) => void; // UX-015: Delete conversation
     intelligence: number;
     empathy: number;
     systemLogs: LogEntry[];
@@ -55,6 +56,7 @@ export function Sidebar({
     conversations,
     setConversationId,
     onNewConversation,
+    onDeleteConversation, // UX-015
     intelligence,
     empathy,
     systemLogs
@@ -94,22 +96,34 @@ export function Sidebar({
                             <span className="text-[10px] text-zinc-700 bg-zinc-900 px-1.5 py-0.5 rounded-md border border-white/5">{conversations.length}</span>
                         </div>
                     )}
-
-                    <div className="space-y-0.5">
-                        {conversations.slice(0, 5).map(chat => (
-                            <button
+                    {/* UX-014: Show more conversations (10 instead of 5), with scrolling */}
+                    <div className="space-y-0.5 max-h-48 overflow-y-auto">
+                        {conversations.slice(0, 10).map(chat => (
+                            <div
                                 key={chat.id}
                                 onClick={() => { setConversationId(chat.id); setActiveTab('chat'); }}
-                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all group text-left hover:bg-zinc-900/50"
+                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all group text-left hover:bg-zinc-900/50 cursor-pointer"
                             >
-                                <MessageCircle size={16} className="text-zinc-500 group-hover:text-zinc-300" />
+                                <MessageCircle size={16} className="text-zinc-500 group-hover:text-zinc-300 flex-shrink-0" />
                                 {sidebarOpen && (
-                                    <div className="flex-1 min-w-0">
-                                        <div className="text-sm text-zinc-400 group-hover:text-zinc-200 truncate">{chat.title}</div>
-                                        <div className="text-[10px] text-zinc-600 truncate">{chat.message_count} сообщ.</div>
-                                    </div>
+                                    <>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-sm text-zinc-400 group-hover:text-zinc-200 truncate">{chat.title}</div>
+                                            <div className="text-[10px] text-zinc-600 truncate">{chat.message_count} сообщ.</div>
+                                        </div>
+                                        {/* UX-015: Delete button */}
+                                        {onDeleteConversation && (
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); onDeleteConversation(chat.id); }}
+                                                className="p-1 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 transition-all rounded"
+                                                title="Удалить диалог"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        )}
+                                    </>
                                 )}
-                            </button>
+                            </div>
                         ))}
                     </div>
                 </div>

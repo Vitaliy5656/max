@@ -1,7 +1,9 @@
 /**
  * Agent Hook — manages AutoGPT agent state.
+ * 
+ * FIX: Added interval cleanup on unmount to prevent memory leak.
  */
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import * as api from '../api/client';
 
 export interface UseAgentOptions {
@@ -17,6 +19,19 @@ export function useAgent(options: UseAgentOptions = {}) {
     const [agentSteps, setAgentSteps] = useState<api.AgentStep[]>([]);
     const [agentConfirmModal, setAgentConfirmModal] = useState(false);
     const [agentFailed, setAgentFailed] = useState(false);
+
+    // FIX: Store interval ref for cleanup
+    const pollIntervalRef = useRef<number | null>(null);
+
+    // FIX: Cleanup interval on unmount to prevent memory leak
+    useEffect(() => {
+        return () => {
+            if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+                pollIntervalRef.current = null;
+            }
+        };
+    }, []);
 
     const requestAgent = useCallback(() => {
         if (!agentGoal.trim() || agentRunning) return;
@@ -34,13 +49,17 @@ export function useAgent(options: UseAgentOptions = {}) {
         try {
             await api.startAgent(agentGoal, 20);
 
-            const pollInterval = setInterval(async () => {
+            // FIX: Store interval ID in ref for cleanup
+            pollIntervalRef.current = window.setInterval(async () => {
                 try {
                     const status = await api.getAgentStatus();
                     setAgentSteps(status.steps);
 
                     if (!status.running) {
-                        clearInterval(pollInterval);
+                        if (pollIntervalRef.current) {
+                            clearInterval(pollIntervalRef.current);
+                            pollIntervalRef.current = null;
+                        }
                         setAgentRunning(false);
 
                         const hasFailed = status.steps?.some((s: { status: string }) => s.status === 'failed');
@@ -53,7 +72,10 @@ export function useAgent(options: UseAgentOptions = {}) {
                         onMetricsRefresh?.();
                     }
                 } catch {
-                    clearInterval(pollInterval);
+                    if (pollIntervalRef.current) {
+                        clearInterval(pollIntervalRef.current);
+                        pollIntervalRef.current = null;
+                    }
                     setAgentRunning(false);
                     setAgentFailed(true);
                     onLog?.('Ошибка при проверке статуса агента', 'error');
@@ -70,6 +92,21 @@ export function useAgent(options: UseAgentOptions = {}) {
         setAgentConfirmModal(false);
     }, []);
 
+    // FIX: Add proper stop function that cancels backend task and clears interval
+    const stopAgent = useCallback(async () => {
+        if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+        }
+        try {
+            await api.stopAgent();
+            onLog?.('Агент остановлен', 'info');
+        } catch {
+            onLog?.('Ошибка остановки агента', 'error');
+        }
+        setAgentRunning(false);
+    }, [onLog]);
+
     return {
         agentGoal,
         setAgentGoal,
@@ -80,5 +117,7 @@ export function useAgent(options: UseAgentOptions = {}) {
         requestAgent,
         confirmAgent,
         cancelAgent,
+        stopAgent, // FIX: Expose stop function
     };
 }
+

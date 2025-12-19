@@ -102,8 +102,13 @@ class MemoryManager:
         
     async def initialize(self):
         """Initialize database connection and create tables."""
-        self._db = await aiosqlite.connect(str(self.db_path))
+        # Connect with generous timeout for concurrency
+        self._db = await aiosqlite.connect(str(self.db_path), timeout=60.0)
         self._db.row_factory = aiosqlite.Row
+        
+        # Enable WAL (Write-Ahead Logging) for better concurrency
+        await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.commit()
         
         # Load and execute schema
         schema_path = Path(__file__).parent.parent.parent / "data" / "schema.sql"
@@ -550,17 +555,23 @@ class MemoryManager:
                 }
             }
             
-            # Craft extraction prompt
-            extract_prompt = f"""Extract ALL facts about the user from their message.
+            # Craft extraction prompt - explicitly require full sentences
+            extract_prompt = f"""Extract MEANINGFUL facts about the user from their message.
 
 USER MESSAGE: "{content}"
 
-Instructions:
-- Extract ANY personal information (name, age, location, family)
-- Extract ALL preferences (hobbies, interests, likes, dislikes)
-- Extract ALL work/project information (profession, current work, skills)
-- If a category has no facts, return empty array
-- Be thorough and extract EVERYTHING relevant
+CRITICAL RULES:
+- Each fact MUST be a complete sentence or phrase (at least 3-5 words)
+- DO NOT extract single words like "интересно" or "понравился"
+- Extract ONLY verifiable information about the user
+- Examples of GOOD facts: "Пользователь интересуется 3D-печатью", "Работает программистом"
+- Examples of BAD facts: "интересно", "понравился бы", "план разговора"
+- If NO meaningful facts found, return EMPTY arrays []
+
+Extract:
+- personal_facts: Name, age, location, family, etc.
+- preference_facts: Specific hobbies, interests, likes/dislikes with context
+- project_facts: Profession, current projects, skills
 
 Respond with valid JSON matching the schema."""
 
@@ -578,23 +589,45 @@ Respond with valid JSON matching the schema."""
             
             log.api(f"📝 Extracted JSON: {json.dumps(facts_data, ensure_ascii=False)[:200]}...")
             
+            # 🛡️ Quality filter function for facts
+            def is_quality_fact(fact: str) -> bool:
+                """Filter out garbage facts - too short, single words, stopwords."""
+                if not fact:
+                    return False
+                fact = fact.strip()
+                # Minimum length: 15 characters
+                if len(fact) < 15:
+                    return False
+                # Minimum words: at least 3 words (real facts are sentences/phrases)
+                words = fact.split()
+                if len(words) < 3:
+                    return False
+                # Skip if just stopwords/common words
+                stopwords = {'это', 'что', 'как', 'для', 'при', 'или', 'так', 'там', 'тут', 
+                            'очень', 'можно', 'нужно', 'хорошо', 'плохо', 'привет', 'пока',
+                            'интересно', 'понятно', 'отлично', 'спасибо', 'пожалуйста'}
+                meaningful_words = [w.lower() for w in words if w.lower() not in stopwords and len(w) > 2]
+                if len(meaningful_words) < 2:
+                    return False
+                return True
+            
             # Save extracted facts to database
             facts_added = 0
             
             for fact in facts_data.get("personal_facts", []):
-                if fact and len(fact.strip()) > 3:
+                if is_quality_fact(fact):
                     await self.add_fact(fact.strip(), "personal", message_id)
                     log.api(f"💾 Personal fact saved: {fact}")
                     facts_added += 1
             
             for fact in facts_data.get("preference_facts", []):
-                if fact and len(fact.strip()) > 3:
+                if is_quality_fact(fact):
                     await self.add_fact(fact.strip(), "preference", message_id)
                     log.api(f"💾 Preference fact saved: {fact}")
                     facts_added += 1
             
             for fact in facts_data.get("project_facts", []):
-                if fact and len(fact.strip()) > 3:
+                if is_quality_fact(fact):
                     await self.add_fact(fact.strip(), "project", message_id)
                     log.api(f"💾 Project fact saved: {fact}")
                     facts_added += 1
@@ -708,6 +741,13 @@ Respond with valid JSON matching the schema."""
                     log.error(f"❌ CRITICAL: Fact {fact_id} not found after commit!")
                 else:
                     log.api(f"✅ FACT SAVED TO DATABASE (ID: {fact_id})")
+                    # P1 Fix: Invalidate Brain Map cache so new fact appears immediately
+                    try:
+                        from src.core.research.brain_map import _invalidate_cache_sync
+                        _invalidate_cache_sync()
+                        log.debug("🧠 Brain Map cache invalidated")
+                    except Exception as cache_err:
+                        log.debug(f"Could not invalidate Brain Map cache: {cache_err}")
             
             return Fact(
                 id=fact_id,
