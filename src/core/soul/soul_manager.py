@@ -55,18 +55,40 @@ class SoulManager:
     - Automatic backup before save
     - Corruption recovery
     - Thread-safe operations
+    - RAM caching with TTL (reduces file I/O)
     """
     
-    def __init__(self, soul_path: Path = None):
+    def __init__(self, soul_path: Path = None, cache_ttl_seconds: int = 300):
         if soul_path is None:
             soul_path = Path(__file__).parent.parent.parent.parent / "data" / "soul.json"
         
         self._soul_path = soul_path
         self._soul_state: Optional[SoulState] = None
+        self._cache_ttl = cache_ttl_seconds
+        self._last_load_time = 0.0
+        self._generation_cache: Dict[str, tuple[str, float]] = {}  # key -> (value, timestamp)
         self._load()
+    
+    def _is_cache_valid(self) -> bool:
+        """Check if cached soul is still valid."""
+        import time
+        if not self._soul_state:
+            return False
+        
+        elapsed = time.time() - self._last_load_time
+        return elapsed < self._cache_ttl
+    
+    def _invalidate_cache(self):
+        """Invalidate all caches."""
+        self._soul_state = None
+        self._last_load_time = 0.0
+        self._generation_cache.clear()
+        log.debug("Soul cache invalidated")
     
     def _load(self):
         """Load soul from disk with corruption recovery."""
+        import time
+        
         try:
             if not self._soul_path.exists():
                 log.warning(f"soul.json not found at {self._soul_path}, creating default")
@@ -75,7 +97,8 @@ class SoulManager:
             
             data = json.loads(self._soul_path.read_text(encoding='utf-8'))
             self._soul_state = SoulState(**data)
-            log.info("✅ Soul loaded successfully")
+            self._last_load_time = time.time()
+            log.info("✅ Soul loaded successfully (cached)")
             
         except (json.JSONDecodeError, FileNotFoundError) as e:
             log.error(f"soul.json corrupted: {e}")
@@ -87,6 +110,7 @@ class SoulManager:
                 try:
                     data = json.loads(backup_path.read_text(encoding='utf-8'))
                     self._soul_state = SoulState(**data)
+                    self._last_load_time = time.time()
                     log.info("✅ Recovered from backup")
                     # Save recovered state
                     self.save()
@@ -159,6 +183,9 @@ class SoulManager:
             # 4. Atomic rename (OS-level atomic operation)
             temp_path.replace(self._soul_path)
             
+            # 5. Invalidate cache (force reload on next access)
+            self._invalidate_cache()
+            
             log.info("✅ soul.json saved atomically")
             
         except Exception as e:
@@ -169,8 +196,9 @@ class SoulManager:
             raise
     
     def get_soul(self) -> SoulState:
-        """Get current soul state."""
-        if not self._soul_state:
+        """Get current soul state (cached)."""
+        if not self._is_cache_valid():
+            log.debug("Soul cache expired, reloading...")
             self._load()
         return self._soul_state
     
@@ -181,6 +209,16 @@ class SoulManager:
         This is the CRITICAL METHOD that chat.py uses.
         DO NOT MODIFY signature!
         """
+        import time
+        
+        # Check generation cache (TTL: 60 seconds)
+        cache_key = "meta_injection"
+        if cache_key in self._generation_cache:
+            cached_value, cached_time = self._generation_cache[cache_key]
+            if time.time() - cached_time < 60:
+                return cached_value
+        
+        # Generate fresh injection
         soul = self.get_soul()
         
         # Build injection from soul.json
@@ -207,7 +245,12 @@ class SoulManager:
         parts.append(f"\nСтиль общения: {comm['style']}")
         parts.append(f"Язык по умолчанию: {comm['default_language']}")
         
-        return "\n".join(parts)
+        result = "\n".join(parts)
+        
+        # Cache result
+        self._generation_cache[cache_key] = (result, time.time())
+        
+        return result
     
     def update_personality_trait(self, trait: str, add: bool = True):
         """Add or remove personality trait."""
