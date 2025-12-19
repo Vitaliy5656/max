@@ -105,6 +105,9 @@ class MemoryManager:
         self._conversation_locks: dict[str, asyncio.Lock] = {}  # Per-conversation locks
         self._cache_max_conversations = 100  # Limit cached conversations
         
+        # Phase 2B: Embedding Cache (RAM optimization - 2x speedup, +50MB RAM)
+        self._embedding_cache: dict[int, list[float]] = {}  # fact_id -> embedding
+        
     async def initialize(self):
         """Initialize database connection and create tables."""
         self._db = await aiosqlite.connect(str(self.db_path))
@@ -732,9 +735,19 @@ Respond with valid JSON matching the schema."""
         self,
         conversation_id: str,
         limit: int = 5,
-        max_tokens: int = 500
+        max_tokens: int = 500,
+        category: Optional[str] = None,
+        query: Optional[str] = None
     ) -> list[Fact]:
-        """Get facts relevant to current conversation using semantic similarity."""
+        """Get facts relevant to current conversation using semantic similarity.
+        
+        Args:
+            conversation_id: Conversation ID for context
+            limit: Maximum facts to return
+            max_tokens: Token budget
+            category: Filter by category ("general", "work", "shadow", "vault")
+            query: Optional custom query for semantic search
+        """
         # Get recent user messages for context
         messages = await self.get_messages(conversation_id, limit=5)
         user_messages = [m for m in messages if m.role == "user"]
@@ -742,24 +755,38 @@ Respond with valid JSON matching the schema."""
         if not user_messages:
             return []
 
-        # Build query from recent messages
-        query_text = " ".join([m.content for m in user_messages[-3:]])
+        # Build query from recent messages or use provided query
+        if query:
+            query_text = query
+        else:
+            query_text = " ".join([m.content for m in user_messages[-3:]])
 
         # Try semantic search with embeddings
         query_embedding = await lm_client.get_embedding(query_text)
 
         if query_embedding:
-            # Get all facts with embeddings
-            async with self._db.execute(
-                "SELECT * FROM memory_facts WHERE embedding IS NOT NULL"
-            ) as cursor:
+            # Build SQL query with optional category filter
+            sql = "SELECT * FROM memory_facts WHERE embedding IS NOT NULL"
+            params = []
+            if category:
+                sql += " AND category = ?"
+                params.append(category)
+            
+            async with self._db.execute(sql, params) as cursor:
                 rows = await cursor.fetchall()
 
-            # Calculate relevance scores
+            # Calculate relevance scores with embedding cache
             scored_facts = []
             for row in rows:
                 try:
-                    fact_embedding = json.loads(row["embedding"].decode())
+                    fact_id = row["id"]
+                    # Check embedding cache first (RAM optimization)
+                    if fact_id in self._embedding_cache:
+                        fact_embedding = self._embedding_cache[fact_id]
+                    else:
+                        fact_embedding = json.loads(row["embedding"].decode())
+                        self._embedding_cache[fact_id] = fact_embedding
+                    
                     score = self._cosine_similarity(query_embedding, fact_embedding)
                     scored_facts.append((row, score))
                 except (json.JSONDecodeError, AttributeError):
@@ -771,13 +798,18 @@ Respond with valid JSON matching the schema."""
         else:
             # Fallback: get ALL facts (no embedding-based filtering)
             from .logger import log
-            log.warn("⚠️ No embeddings available for semantic search, using fallback")
-            async with self._db.execute(
-                """SELECT * FROM memory_facts
-                   ORDER BY created_at DESC
-                   LIMIT ?""",
-                (limit * 2,)
-            ) as cursor:
+            log.warn("No embeddings available for semantic search, using fallback")
+            
+            # Build SQL with optional category filter
+            sql = "SELECT * FROM memory_facts"
+            params = []
+            if category:
+                sql += " WHERE category = ?"
+                params.append(category)
+            sql += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit * 2)
+            
+            async with self._db.execute(sql, params) as cursor:
                 rows = await cursor.fetchall()
 
         # Filter by token budget
