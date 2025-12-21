@@ -21,15 +21,15 @@ echo [MAX] Using portable Python (Siril)...
 echo.
 
 echo [MAX] Working Directory: %CD%
-echo [MAX] Scripts Location: scripts/knowledge_boost/
+echo [MAX] Scripts Location: EXTERNAL_DATA/knowledge_boost/
 echo.
 
 echo [MAX] Starting Import (LITE TEST)...
-"%PYTHON_EXE%" scripts/knowledge_boost/import_boost.py
+"%PYTHON_EXE%" EXTERNAL_DATA/knowledge_boost/import_boost.py
 
 echo.
 echo [MAX] Verifying Database...
-"%PYTHON_EXE%" scripts/knowledge_boost/check_db.py
+"%PYTHON_EXE%" EXTERNAL_DATA/knowledge_boost/check_db.py
 
 echo.
 echo [DONE] Execution complete.
