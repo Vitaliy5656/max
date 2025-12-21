@@ -16,6 +16,7 @@ from typing import AsyncIterator, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
 import httpx
+import numpy as np
 from openai import AsyncOpenAI
 
 from .config import config
@@ -172,12 +173,37 @@ class LMStudioClient:
         except Exception:
             return None
 
-    async def get_loaded_model(self) -> Optional[str]:
-        """Get currently loaded model (API check)."""
+    async def get_loaded_models_via_cli(self) -> list[str]:
+        """Use 'lms ps' to get currently loaded models in VRAM."""
         try:
-            # Fast check
+            result = await safe_shell.execute("lms ps", timeout=10.0)
+            if result.return_code != 0:
+                return []
+            
+            lines = result.stdout.splitlines()
+            loaded = []
+            for line in lines:
+                if not line or line.startswith("IDENTIFIER") or "-----" in line:
+                    continue
+                parts = line.split()
+                if parts:
+                    loaded.append(parts[0])
+            return loaded
+        except Exception as e:
+            log.error(f"Error checking loaded models via CLI: {e}")
+            return []
+
+    async def get_loaded_model(self) -> Optional[str]:
+        """Get currently loaded model (API check fallback to CLI)."""
+        try:
+            # API check
             models = await self.list_models()
-            return models[0].id if models else None
+            if models:
+                return models[0].id
+            
+            # CLI check if API is silent
+            loaded_cli = await self.get_loaded_models_via_cli()
+            return loaded_cli[0] if loaded_cli else None
         except:
             return None
     
@@ -312,21 +338,49 @@ class LMStudioClient:
         return config.lm_studio.thinking_modes["standard"]
     
     async def get_model_for_task(self, task_type: TaskType) -> str:
-        """Smart routing: get best model for task type."""
-        # Use available models if cached, else use config defaults
-        # Only do a quick check if we have cache, don't force scan
-        available = await self.get_available_models(force_refresh=False)
+        """
+        Smart routing: get best model for task type STICKING ONLY to loaded models if possible.
+        """
+        # Strictly check what is in VRAM right now
+        loaded_ids = await self.get_loaded_models_via_cli()
         
-        # TODO: Implement sophisticated matching against 'available'
-        # For now, sticking to config defaults but logging intent
-        if task_type == TaskType.VISION:
-            return config.lm_studio.vision_model
-        elif task_type == TaskType.REASONING:
-            return config.lm_studio.reasoning_model
-        elif task_type == TaskType.QUICK:
-            return config.lm_studio.quick_model
-        else:
+        # Filter out embeddings
+        loaded_ids = [m for m in loaded_ids if "embed" not in m.lower() and "bge" not in m.lower()]
+        
+        if not loaded_ids:
+            # Fallback to API check if CLI fails
+            loaded = await self.list_models()
+            loaded_ids = [m.id for m in loaded if "embed" not in m.id.lower() and "bge" not in m.id.lower()]
+        
+        if not loaded_ids:
+            log.warn("No models loaded in LM Studio! Using config default (unsafe).")
             return config.lm_studio.default_model
+        
+        # Helper to check if model name suggests a certain role (REASONING vs QUICK)
+        def is_strong(m_id: str) -> bool:
+            m_id = m_id.lower()
+            return any(kw in m_id for kw in ["large", "12b", "14b", "24b", "30b", "32b", "70b", "deepseek-r1", "ministral", "mistral", "nemo", "command-r", "llama", "qwen", "gemma", "3-14b"])
+            
+        def is_quick(m_id: str) -> bool:
+            m_id = m_id.lower()
+            return any(kw in m_id for kw in ["small", "mini", "phi", "1b", "3b", "0.5b", "flash", "haiku"])
+
+        if task_type in [TaskType.REASONING, TaskType.DEFAULT]:
+            for m_id in loaded_ids:
+                if is_strong(m_id): return m_id
+            
+        elif task_type == TaskType.QUICK:
+            for m_id in loaded_ids:
+                if is_quick(m_id): return m_id
+            
+        elif task_type == TaskType.VISION:
+            for m_id in loaded_ids:
+                if "vision" in m_id.lower() or "pixtral" in m_id.lower(): return m_id
+
+        # Strict Fallback: Use whatever is loaded
+        best_of_loaded = loaded_ids[0]
+        log.lm(f"GPU Safe: using already loaded '{best_of_loaded}' for {task_type.value}")
+        return best_of_loaded
     
     def detect_task_type(self, message: str, has_image: bool = False) -> TaskType:
         """Auto-detect task type from message content."""
@@ -413,17 +467,51 @@ class LMStudioClient:
         # Get mode configuration
         mode_config = self.get_mode_config(thinking_mode)
         
+        # SMART ROUTER INTEGRATION (P0 Audit Fix)
+        # If no specific model/task is requested, spy on the prompt to route intelligently
+        if not model and not task_type and not kwargs.get("tools"):
+             try:
+                 from .routing import get_smart_router
+                 last_user_msg = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+                 if last_user_msg:
+                     # Fast routing (cache optimized)
+                     router = get_smart_router()
+                     route_result = await router.route(last_user_msg)
+                     
+                     if route_result.intent == "coding":
+                         task_type = TaskType.CODING
+                         log.lm(f"🔀 Smart Router: Detected CODING intent -> {task_type}")
+                     elif route_result.intent == "math" or "reasoning" in route_result.intent:
+                         task_type = TaskType.REASONING
+                         log.lm(f"🔀 Smart Router: Detected REASONING intent -> {task_type}")
+                     elif route_result.safety_level in ["paranoid", "guarded"]:
+                         # Potential use of specific safe models
+                         pass
+             except ImportError:
+                 pass
+             except Exception as e:
+                 # Don't let routing crash the chat
+                 log.lm(f"⚠️ Smart Routing failed: {e}")
+
+        # Model Selection Logic based on mode
         # Model Selection Logic based on mode
         if config.lm_studio.model_selection_mode == "manual":
-            # MANUAL MODE: Thinking modes do NOT change model
-            # Only apply temperature and token limits
+            # MANUAL MODE: Thinking modes do NOT change model automatically via CLI
+            # Но мы должны выбрать ЛУЧШУЮ ЗАГРУЖЕННУЮ модель, если она не указана явно
             if not model:
-                # No explicit model → use currently loaded or default
-                loaded = await self.get_loaded_model()
-                model = loaded if loaded else config.lm_studio.default_model
-                log.lm(f"🎯 MANUAL mode: using {'loaded' if loaded else 'default'} model: {model}")
+                # If task_type is provided, use it to select from loaded
+                current_task = task_type
+                if not current_task:
+                    # Map thinking_mode back to TaskType
+                    if thinking_mode == ThinkingMode.DEEP: current_task = TaskType.REASONING
+                    elif thinking_mode == ThinkingMode.VISION: current_task = TaskType.VISION
+                    elif thinking_mode == ThinkingMode.FAST: current_task = TaskType.QUICK
+                    else: current_task = TaskType.DEFAULT
+                
+                model = await self.get_model_for_task(current_task)
+                log.lm(f"🎯 MANUAL mode best match: {model} for {current_task.value}")
             else:
-                log.lm(f"🎯 MANUAL mode: explicit model selection: {model}")
+                log.lm(f"🎯 MANUAL mode explicit: {model}")
             
             # Apply only thinking parameters (not model)
             if temperature is None:
@@ -467,6 +555,7 @@ class LMStudioClient:
         self._current_model = model
 
         if stream:
+            from .parallel import SlotPriority
             # P0 Fix: Wrap streaming with SlotManager
             return self._stream_with_slots(params, priority=SlotPriority.STANDARD)
         else:
@@ -475,18 +564,11 @@ class LMStudioClient:
             async with self._request_semaphore:
                 await self._enforce_rate_limit()
                 
-                # Acquire slot (blocking)
-                # Since we can't yield "heartbeats" in a non-async-gen function effectively here without changing return type,
-                # we assume non-streaming is fast enough or handled by upper layer.
-                # BUT for consistency, we should use slot_manager. 
-                # However, acquire_slot is an async generator.
-                # Simplified: Just blocking wait for now (User mostly uses streaming).
-                
-                # TODO: Implement proper slot acquisition for non-streaming if needed.
-                # For now, bypassing slots for non-streaming system calls (usually fast/low priority)
-                
+                log.lm(f"🚀 Non-streaming request to: {model} (max_tokens: {max_tokens})")
                 response = await self.client.chat.completions.create(**params)
-                return response.choices[0].message.content or ""
+                content = response.choices[0].message.content or ""
+                log.lm(f"✅ Non-streaming response received ({len(content)} chars)")
+                return content
 
     async def _stream_with_slots(self, params: dict, priority: Any) -> AsyncIterator[str]:
         """Stream response with Slot management (Heartbeats)."""
@@ -838,13 +920,25 @@ class LMStudioClient:
     
     async def get_embedding(self, text: str) -> list[float]:
         """Get embedding vector for text."""
+        # Type safety check to prevent "double embedding" errors
+        if isinstance(text, (list, np.ndarray)):
+            log.warn(f"⚠️ get_embedding called with already-computed vector (Type: {type(text)})")
+            if isinstance(text, np.ndarray):
+                return text.tolist()
+            return text
+            
+        if not isinstance(text, str):
+            log.error(f"❌ get_embedding called with invalid type: {type(text)}")
+            return []
+
         try:
             response = await self.client.embeddings.create(
-                model="text-embedding-model",  # LM Studio embedding model
+                model="text-embedding-bge-m3",  # LM Studio embedding model
                 input=text
             )
             return response.data[0].embedding
-        except Exception:
+        except Exception as e:
+            log.error(f"Embedding API error: {e}")
             # Silent fail - embeddings are optional, system uses keyword fallback
             return []
 

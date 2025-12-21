@@ -11,15 +11,19 @@ import json
 import uuid
 import asyncio
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional, Any, List
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import aiosqlite
 import tiktoken
 
+import cachetools
+from contextvars import ContextVar
+
 from .config import config
 from .lm_client import lm_client
+from .quantum.titans_engine import TitansEngine
 
 
 # P3 fix: Constants for context allocation (magic numbers extracted)
@@ -106,7 +110,12 @@ class MemoryManager:
         self._cache_max_conversations = 100  # Limit cached conversations
         
         # Phase 2B: Embedding Cache (RAM optimization - 2x speedup, +50MB RAM)
-        self._embedding_cache: dict[int, list[float]] = {}  # fact_id -> embedding
+        # P1-1 Fix: Use LRUCache to prevent memory leak
+        self._embedding_cache = cachetools.LRUCache(maxsize=1000)
+        
+        # Titans + MIRAS: Neural Long-Term Memory
+        self.titans = TitansEngine(embedding_dim=1024, hidden_dim=2048, device="cpu")
+        self.titans_vault_path = Path(__file__).parent.parent.parent / "data" / "titans_brain.pt"
         
     async def initialize(self):
         """Initialize database connection and create tables."""
@@ -130,6 +139,28 @@ class MemoryManager:
                     log.warn(f"Schema warning: {e}")
             await self._db.commit()
             
+        # Initialize Titans Engine
+        # Dynamic Dimension Detection: Ensure Titans matches the actual embedding model
+        try:
+            from .lm_client import lm_client
+            test_emb = await lm_client.get_embedding("dimension test")
+            if test_emb and len(test_emb) > 0:
+                actual_dim = len(test_emb)
+                if actual_dim != self.titans.embedding_dim:
+                    from .logger import log
+                    log.api(f"Titans resized from {self.titans.embedding_dim} to {actual_dim} to match model.")
+                    self.titans = TitansEngine(embedding_dim=actual_dim, hidden_dim=2048, device="cpu")
+        except Exception as e:
+            from .logger import log
+            log.warn(f"Titans dimension auto-detection failed: {e}")
+
+        if self.titans_vault_path.exists():
+            try:
+                self.titans.load_from_vault(str(self.titans_vault_path))
+            except Exception as e:
+                from .logger import log
+                log.error(f"Failed to load Titans Memory: {e}")
+            
     async def close(self):
         """Close database connection after waiting for pending tasks."""
         if self._pending_tasks:
@@ -139,6 +170,13 @@ class MemoryManager:
         
         if self._db:
             await self._db.close()
+            
+        # Save Titans Memory
+        try:
+            self.titans.save_to_vault(str(self.titans_vault_path))
+        except Exception as e:
+            from .logger import log
+            log.error(f"Failed to save Titans Memory: {e}")
             
     def count_tokens(self, text: str) -> int:
         """Count tokens in text using tiktoken."""
@@ -193,25 +231,37 @@ class MemoryManager:
             ]
 
     async def delete_conversation(self, conv_id: str) -> bool:
-        """Delete a conversation and all its messages/summaries."""
-        # Delete messages first (foreign key constraint)
-        await self._db.execute(
-            "DELETE FROM messages WHERE conversation_id = ?", (conv_id,)
-        )
-        # Delete summaries
-        await self._db.execute(
-            "DELETE FROM conversation_summaries WHERE conversation_id = ?", (conv_id,)
-        )
-        # Delete conversation
-        cursor = await self._db.execute(
-            "DELETE FROM conversations WHERE id = ?", (conv_id,)
-        )
-        await self._db.commit()
+        """
+        Delete a conversation and all its messages/summaries.
+        P2-1 Fix: Wrapped in transaction for atomicity.
+        """
+        try:
+            await self._db.execute("BEGIN TRANSACTION")
+            
+            # Delete messages first (foreign key constraint)
+            await self._db.execute(
+                "DELETE FROM messages WHERE conversation_id = ?", (conv_id,)
+            )
+            # Delete summaries
+            await self._db.execute(
+                "DELETE FROM conversation_summaries WHERE conversation_id = ?", (conv_id,)
+            )
+            # Delete conversation
+            cursor = await self._db.execute(
+                "DELETE FROM conversations WHERE id = ?", (conv_id,)
+            )
+            
+            await self._db.execute("COMMIT")
+            
+            # Clear summarization failure counter
+            _summarization_failures.pop(conv_id, None)
 
-        # Clear summarization failure counter
-        _summarization_failures.pop(conv_id, None)
-
-        return cursor.rowcount > 0
+            return cursor.rowcount > 0
+        except Exception as e:
+            await self._db.execute("ROLLBACK")
+            from .logger import log
+            log.error(f"Failed to delete conversation {conv_id} atomically: {e}")
+            return False
     
     # ==================== Messages ====================
     
@@ -248,6 +298,13 @@ class MemoryManager:
         # Extract facts from user messages (with error logging)
         if role == "user" and config.memory.extract_facts:
             task = asyncio.create_task(self._extract_facts(cursor.lastrowid, content))
+            self._pending_tasks.add(task)
+            task.add_done_callback(lambda t: self._pending_tasks.discard(t))
+            task.add_done_callback(_log_task_exception)
+            
+        # TITANS: Neural Test-Time Training (TTT)
+        if role == "user":
+            task = asyncio.create_task(self._titans_learn(content))
             self._pending_tasks.add(task)
             task.add_done_callback(lambda t: self._pending_tasks.discard(t))
             task.add_done_callback(_log_task_exception)
@@ -356,6 +413,11 @@ class MemoryManager:
         if system_parts:
             consolidated_system = "\n\n".join(system_parts)
             context.append({"role": "system", "content": consolidated_system})
+            
+        # 3b. Include Titans Neural Recall (Intuition)
+        neural_context = await self._get_titans_context(conversation_id)
+        if neural_context:
+            context.append({"role": "system", "content": neural_context})
         
         # 4. Get recent messages (User/Assistant only, no system messages from history)
         messages = await self.get_messages(
@@ -572,9 +634,15 @@ Instructions:
 
 Respond with valid JSON matching the schema."""
 
+            # Resolve extraction model
+            extraction_model = config.memory.extraction_model
+            if extraction_model == "auto":
+                from .config import config as app_config
+                extraction_model = app_config.lm_studio.reasoning_model
+                
             # Call LM Studio with JSON Schema enforcement
             response = await lm_client.client.chat.completions.create(
-                model=config.memory.extraction_model,
+                model=extraction_model,
                 messages=[{"role": "user", "content": extract_prompt}],
                 response_format=json_schema,  # GBNF grammar enforcement
                 temperature=0.1,  # Low temperature for consistent extraction
@@ -630,7 +698,10 @@ Respond with valid JSON matching the schema."""
         from .logger import log
         
         extraction_model = config.memory.extraction_model
-        
+        if extraction_model == "auto":
+            # Select best available reasoning model
+            extraction_model = config.lm_studio.reasoning_model
+            
         try:
             log.debug(f"🤖 Calling extraction model: {extraction_model}")
             
@@ -663,16 +734,28 @@ Respond with valid JSON matching the schema."""
         from .logger import log
         
         try:
-            log.debug(f"💾 Attempting to save fact: [{category}] {content[:50]}...")
+            log.debug(f"[SAVE] Attempting to save fact: [{category}] {content[:50]}...")
             
-            # Logic Fix: Deduplication
+            # CONTENT QUALITY FILTER - don't save garbage
+            content = content.strip()
+            if content.startswith("http") or content.startswith("📄"):
+                # Strip URL prefix
+                if "\n" in content:
+                    content = content.split("\n", 1)[1].strip()
+            
+            if len(content) < 12:
+                log.debug(f"[SAVE] Content too short ({len(content)} chars), skipping")
+                return Fact(id=-1, content=content, category=category, embedding=None)
+            
+            # SMART DEDUPLICATION - check exact match AND prefix match
             async with self._db.execute(
-                "SELECT * FROM memory_facts WHERE content = ? LIMIT 1",
-                (content,)
+                """SELECT * FROM memory_facts 
+                   WHERE content = ? OR content LIKE ? LIMIT 1""",
+                (content, content[:100] + "%")
             ) as cursor:
                 existing = await cursor.fetchone()
                 if existing:
-                    log.debug(f"⚠️ Fact already exists (ID: {existing['id']})")
+                    log.debug(f"[SAVE] Duplicate found (ID: {existing['id']})")
                     return Fact(
                         id=existing["id"],
                         content=existing["content"],
@@ -737,7 +820,8 @@ Respond with valid JSON matching the schema."""
         limit: int = 5,
         max_tokens: int = 500,
         category: Optional[str] = None,
-        query: Optional[str] = None
+        query: Optional[str] = None,
+        raw_embedding: Optional[List[float]] = None
     ) -> list[Fact]:
         """Get facts relevant to current conversation using semantic similarity.
         
@@ -747,6 +831,7 @@ Respond with valid JSON matching the schema."""
             max_tokens: Token budget
             category: Filter by category ("general", "work", "shadow", "vault")
             query: Optional custom query for semantic search
+            raw_embedding: Optional pre-calculated embedding for search
         """
         # Get recent user messages for context
         messages = await self.get_messages(conversation_id, limit=5)
@@ -762,7 +847,10 @@ Respond with valid JSON matching the schema."""
             query_text = " ".join([m.content for m in user_messages[-3:]])
 
         # Try semantic search with embeddings
-        query_embedding = await lm_client.get_embedding(query_text)
+        if raw_embedding:
+            query_embedding = raw_embedding
+        else:
+            query_embedding = await lm_client.get_embedding(query_text)
 
         if query_embedding:
             # Build SQL query with optional category filter
@@ -937,6 +1025,68 @@ Respond with valid JSON matching the schema."""
             )
             for row in rows
         ]
+
+    # ==================== Titans + MIRAS Helpers ====================
+
+    async def _titans_learn(self, content: str):
+        """Background task for Titans neural learning."""
+        try:
+            embedding = await lm_client.get_embedding(content)
+            if embedding:
+                # Test-Time Training (TTT) logic inside process_signal
+                result = await self.titans.process_signal(embedding)
+                if result.get("is_stored"):
+                    from .logger import log
+                    log.api(f"🧠 [TITANS] Neural Memory updated (Surprise: {result['surprise']:.2f})")
+        except Exception as e:
+            from .logger import log
+            log.error(f"Titans learning failed: {e}")
+
+    async def _get_titans_context(self, conversation_id: str) -> Optional[str]:
+        """Get associative neural context from Titans."""
+        try:
+            # Get last user message to trigger recall
+            messages = await self.get_messages(conversation_id, limit=1)
+            if not messages:
+                return None
+            
+            last_msg = messages[-1].content
+            embedding = await lm_client.get_embedding(last_msg)
+            if not embedding:
+                return None
+            
+            # 1. Neural Recall (Association from weights)
+            titans_res = await self.titans.process_signal(embedding)
+            recall_emb = titans_res.get("recall_embedding")
+            
+            if not recall_emb:
+                return None
+            
+            # 2. Associative Search: find facts nearest to the NEURAL recall
+            # This implements the bridge between neural weights and structured data
+            associative_facts = await self.get_relevant_facts(
+                conversation_id,
+                raw_embedding=recall_emb, # Use the neural recall directly!
+                limit=3
+            )
+            
+            if associative_facts:
+                facts_text = "\n".join([f"• {f.content}" for f in associative_facts])
+                return f"[НЕЙРОННАЯ ИНТУИЦИЯ (TITANS)]:\nСистема ассоциирует текущий контекст со следующими фактами:\n{facts_text}"
+            
+            return None
+        except Exception as e:
+            from .logger import log
+            log.error(f"Titans recall failed: {e}")
+            return None
+
+    async def delete_fact(self, fact_id: int) -> bool:
+        """Delete a fact from long-term memory."""
+        cursor = await self._db.execute(
+            "DELETE FROM memory_facts WHERE id = ?", (fact_id,)
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
 
 
 # Global memory manager instance

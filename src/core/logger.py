@@ -48,6 +48,7 @@ class Component(Enum):
 
     COGNITIVE = "COGNITIVE"
     PARALLEL = "PARALLEL"
+    RESEARCH = "RESEARCH"
 
 
 # Context variable for request tracing
@@ -105,6 +106,7 @@ class Logger:
 
             Component.COGNITIVE: "\033[38;5;213m", # Pink
             Component.PARALLEL: Colors.PARALLEL,
+            Component.RESEARCH: Colors.API, # Use Blue for research too
         }
         
         level_colors = {
@@ -145,10 +147,36 @@ class Logger:
         return " ".join(parts)
     
     def _print(self, component: Component, message: str, level: str = "INFO", **kwargs):
-        """Print formatted log line."""
+        """Print formatted log line with safe encoding for Windows."""
         line = self._format(component, message, level, **kwargs)
-        if line:
+        if not line:
+            return
+            
+        try:
             print(line, file=sys.stderr, flush=True)
+        except UnicodeEncodeError:
+            # Windows console can't handle some Unicode chars
+            # 1. Manual replacements for common symbols to keep them readable
+            replacements = {
+                '✓': '[OK]', '✅': '[OK]', '✨': '[OK]', '🎯': '[TARGET]',
+                '❌': '[ERR]', '✗': '[ERR]', '⚠️': '[WARN]', '🔍': '[SEARCH]',
+                '💾': '[SAVE]', '📨': '[IN]', '📤': '[OUT]', '🔌': '[CONN]',
+                '🧠': '[THINK]', '🚫': '[BLOCK]', '🔢': '[NUM]', '📝': '[NOTE]',
+                '💿': '[DB]', '🤖': '[BOT]', '�': '[EMPTY]', '🚀': '[LAUNCH]',
+                '🧩': '[STATE]', '🔀': '[ROUTE]', '�️': '[VISION]', '⏳': '[WAIT]'
+            }
+            
+            safe_line = line
+            for char, rep in replacements.items():
+                safe_line = safe_line.replace(char, rep)
+            
+            # 2. Final nuclear option: encode to ascii and replace anything else with '?'
+            try:
+                # Try UTF-8 if it was a charmap error
+                print(safe_line.encode('utf-8', errors='replace').decode('utf-8', errors='replace'), file=sys.stderr, flush=True)
+            except:
+                # Force ASCII as absolute fallback
+                print(safe_line.encode('ascii', errors='replace').decode('ascii'), file=sys.stderr, flush=True)
     
     # === Component-specific methods ===
     
@@ -179,6 +207,14 @@ class Logger:
     def parallel(self, message: str, **kwargs):
         """Log Parallel execution events."""
         self._print(Component.PARALLEL, message, **kwargs)
+
+    def research(self, message: str, **kwargs):
+        """Log Deep Research Agent events."""
+        self._print(Component.RESEARCH, message, **kwargs)
+        
+    def info(self, message: str, **kwargs):
+        """Alias for api() to support standard logging interface."""
+        self.api(message, **kwargs)
     
     def error(self, message: str, **kwargs):
         """Log errors from any component."""

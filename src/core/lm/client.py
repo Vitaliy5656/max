@@ -404,7 +404,7 @@ class LMStudioClient:
         """Get embedding vector for text."""
         try:
             response = await self.client.embeddings.create(
-                model="text-embedding-model",
+                model="text-embedding-bge-m3",
                 input=text
             )
             return response.data[0].embedding
