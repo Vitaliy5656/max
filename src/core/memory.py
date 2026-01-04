@@ -11,15 +11,19 @@ import json
 import uuid
 import asyncio
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional, Any, List
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import aiosqlite
 import tiktoken
 
+import cachetools
+from contextvars import ContextVar
+
 from .config import config
 from .lm_client import lm_client
+from .quantum.titans_engine import TitansEngine
 
 
 # P3 fix: Constants for context allocation (magic numbers extracted)
@@ -98,6 +102,20 @@ class MemoryManager:
         self.db_path = db_path or config.db_path
         self._db: Optional[aiosqlite.Connection] = None
         self._encoder = None  # Lazy loaded
+        self._pending_tasks: set[asyncio.Task] = set()  # Track background fact extraction
+        
+        # Phase 2B: Conversation History RAM Cache
+        self._conversation_cache: dict[str, list] = {}  # conv_id -> messages
+        self._conversation_locks: dict[str, asyncio.Lock] = {}  # Per-conversation locks
+        self._cache_max_conversations = 100  # Limit cached conversations
+        
+        # Phase 2B: Embedding Cache (RAM optimization - 2x speedup, +50MB RAM)
+        # P1-1 Fix: Use LRUCache to prevent memory leak
+        self._embedding_cache = cachetools.LRUCache(maxsize=1000)
+        
+        # Titans + MIRAS: Neural Long-Term Memory
+        self.titans = TitansEngine(embedding_dim=1024, hidden_dim=2048, device="cpu")
+        self.titans_vault_path = Path(__file__).parent.parent.parent / "data" / "titans_brain.pt"
         
     async def initialize(self):
         """Initialize database connection and create tables."""
@@ -121,10 +139,44 @@ class MemoryManager:
                     log.warn(f"Schema warning: {e}")
             await self._db.commit()
             
+        # Initialize Titans Engine
+        # Dynamic Dimension Detection: Ensure Titans matches the actual embedding model
+        try:
+            from .lm_client import lm_client
+            test_emb = await lm_client.get_embedding("dimension test")
+            if test_emb and len(test_emb) > 0:
+                actual_dim = len(test_emb)
+                if actual_dim != self.titans.embedding_dim:
+                    from .logger import log
+                    log.api(f"Titans resized from {self.titans.embedding_dim} to {actual_dim} to match model.")
+                    self.titans = TitansEngine(embedding_dim=actual_dim, hidden_dim=2048, device="cpu")
+        except Exception as e:
+            from .logger import log
+            log.warn(f"Titans dimension auto-detection failed: {e}")
+
+        if self.titans_vault_path.exists():
+            try:
+                self.titans.load_from_vault(str(self.titans_vault_path))
+            except Exception as e:
+                from .logger import log
+                log.error(f"Failed to load Titans Memory: {e}")
+            
     async def close(self):
-        """Close database connection."""
+        """Close database connection after waiting for pending tasks."""
+        if self._pending_tasks:
+            from .logger import log
+            log.api(f"⏳ Waiting for {len(self._pending_tasks)} pending extraction tasks...")
+            await asyncio.gather(*self._pending_tasks, return_exceptions=True)
+        
         if self._db:
             await self._db.close()
+            
+        # Save Titans Memory
+        try:
+            self.titans.save_to_vault(str(self.titans_vault_path))
+        except Exception as e:
+            from .logger import log
+            log.error(f"Failed to save Titans Memory: {e}")
             
     def count_tokens(self, text: str) -> int:
         """Count tokens in text using tiktoken."""
@@ -160,11 +212,11 @@ class MemoryManager:
                 )
         return None
     
-    async def list_conversations(self, limit: int = 50) -> list[Conversation]:
-        """List recent conversations."""
+    async def list_conversations(self, limit: int = 50, offset: int = 0) -> list[Conversation]:
+        """List recent conversations with pagination."""
         async with self._db.execute(
-            "SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ?",
-            (limit,)
+            "SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            (limit, offset)
         ) as cursor:
             rows = await cursor.fetchall()
             return [
@@ -179,25 +231,37 @@ class MemoryManager:
             ]
 
     async def delete_conversation(self, conv_id: str) -> bool:
-        """Delete a conversation and all its messages/summaries."""
-        # Delete messages first (foreign key constraint)
-        await self._db.execute(
-            "DELETE FROM messages WHERE conversation_id = ?", (conv_id,)
-        )
-        # Delete summaries
-        await self._db.execute(
-            "DELETE FROM conversation_summaries WHERE conversation_id = ?", (conv_id,)
-        )
-        # Delete conversation
-        cursor = await self._db.execute(
-            "DELETE FROM conversations WHERE id = ?", (conv_id,)
-        )
-        await self._db.commit()
+        """
+        Delete a conversation and all its messages/summaries.
+        P2-1 Fix: Wrapped in transaction for atomicity.
+        """
+        try:
+            await self._db.execute("BEGIN TRANSACTION")
+            
+            # Delete messages first (foreign key constraint)
+            await self._db.execute(
+                "DELETE FROM messages WHERE conversation_id = ?", (conv_id,)
+            )
+            # Delete summaries
+            await self._db.execute(
+                "DELETE FROM conversation_summaries WHERE conversation_id = ?", (conv_id,)
+            )
+            # Delete conversation
+            cursor = await self._db.execute(
+                "DELETE FROM conversations WHERE id = ?", (conv_id,)
+            )
+            
+            await self._db.execute("COMMIT")
+            
+            # Clear summarization failure counter
+            _summarization_failures.pop(conv_id, None)
 
-        # Clear summarization failure counter
-        _summarization_failures.pop(conv_id, None)
-
-        return cursor.rowcount > 0
+            return cursor.rowcount > 0
+        except Exception as e:
+            await self._db.execute("ROLLBACK")
+            from .logger import log
+            log.error(f"Failed to delete conversation {conv_id} atomically: {e}")
+            return False
     
     # ==================== Messages ====================
     
@@ -234,6 +298,15 @@ class MemoryManager:
         # Extract facts from user messages (with error logging)
         if role == "user" and config.memory.extract_facts:
             task = asyncio.create_task(self._extract_facts(cursor.lastrowid, content))
+            self._pending_tasks.add(task)
+            task.add_done_callback(lambda t: self._pending_tasks.discard(t))
+            task.add_done_callback(_log_task_exception)
+            
+        # TITANS: Neural Test-Time Training (TTT)
+        if role == "user":
+            task = asyncio.create_task(self._titans_learn(content))
+            self._pending_tasks.add(task)
+            task.add_done_callback(lambda t: self._pending_tasks.discard(t))
             task.add_done_callback(_log_task_exception)
         
         return Message(
@@ -297,10 +370,16 @@ class MemoryManager:
         2. Include recent messages (up to limit)
         3. Include relevant facts
         4. Include cross-session relevant context
+        
+        IMPORTANT: All system content is consolidated into ONE system message
+        to satisfy strict message alternation requirements (System -> User -> Assistant -> ...)
         """
         max_tokens = max_tokens or config.memory.max_context_tokens
         context = []
         tokens_used = 0
+        
+        # Collect all system content parts
+        system_parts = []
         
         # 1. Get conversation summary
         async with self._db.execute(
@@ -313,27 +392,10 @@ class MemoryManager:
                 summary_msg = f"[Краткое содержание предыдущего разговора: {row['summary']}]"
                 tokens = self.count_tokens(summary_msg)
                 if tokens_used + tokens < max_tokens * config.memory.summary_token_ratio:
-                    context.append({"role": "system", "content": summary_msg})
+                    system_parts.append(summary_msg)
                     tokens_used += tokens
         
-        # 2. Get recent messages
-        messages = await self.get_messages(
-            conversation_id, 
-            limit=config.memory.max_session_messages
-        )
-        
-        # Add messages from newest to oldest until budget exhausted
-        messages_to_add = []
-        for msg in reversed(messages):
-            msg_tokens = msg.tokens_used or self.count_tokens(msg.content)
-            if tokens_used + msg_tokens > max_tokens * MESSAGES_TOKEN_RATIO:
-                break
-            messages_to_add.insert(0, {"role": msg.role, "content": msg.content})
-            tokens_used += msg_tokens
-        
-        context.extend(messages_to_add)
-        
-        # 3. Include relevant facts
+        # 2. Include relevant facts (add to system parts)
         if include_facts:
             facts = await self.get_relevant_facts(
                 conversation_id, 
@@ -344,7 +406,38 @@ class MemoryManager:
                 facts_text = "\n".join([f"• {f.content}" for f in facts])
                 facts_msg = f"[Известные факты о пользователе:\n{facts_text}]"
                 if tokens_used + self.count_tokens(facts_msg) < max_tokens:
-                    context.insert(0, {"role": "system", "content": facts_msg})
+                    system_parts.append(facts_msg)
+                    tokens_used += self.count_tokens(facts_msg)
+        
+        # 3. Build consolidated system message (ONE system message only)
+        if system_parts:
+            consolidated_system = "\n\n".join(system_parts)
+            context.append({"role": "system", "content": consolidated_system})
+            
+        # 3b. Include Titans Neural Recall (Intuition)
+        neural_context = await self._get_titans_context(conversation_id)
+        if neural_context:
+            context.append({"role": "system", "content": neural_context})
+        
+        # 4. Get recent messages (User/Assistant only, no system messages from history)
+        messages = await self.get_messages(
+            conversation_id, 
+            limit=config.memory.max_session_messages
+        )
+        
+        # Add messages from newest to oldest until budget exhausted
+        messages_to_add = []
+        for msg in reversed(messages):
+            # Skip system messages from history (they would break alternation)
+            if msg.role == "system":
+                continue
+            msg_tokens = msg.tokens_used or self.count_tokens(msg.content)
+            if tokens_used + msg_tokens > max_tokens * MESSAGES_TOKEN_RATIO:
+                break
+            messages_to_add.insert(0, {"role": msg.role, "content": msg.content})
+            tokens_used += msg_tokens
+        
+        context.extend(messages_to_add)
         
         return context
     
@@ -426,7 +519,31 @@ class MemoryManager:
             prefix = "User:" if msg.role == "user" else "Assistant:"
             text_parts.append(f"{prefix} {msg.content[:500]}")  # Truncate long messages
         
-        summarize_prompt = f"""Кратко суммируй основные темы и ключевые моменты этого разговора (2-3 предложения):
+        # P1 Fix: Recursive Summarization
+        # Retrieve previous summary to ensure we don't lose history
+        old_summary = ""
+        async with self._db.execute(
+            """SELECT summary FROM conversation_summaries 
+               WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1""",
+            (conversation_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row and row["summary"]:
+                old_summary = row["summary"]
+
+        if old_summary:
+            summarize_prompt = f"""У нас есть краткое содержание предыдущей части разговора:
+"{old_summary}"
+
+А вот новые сообщения:
+{chr(10).join(text_parts)}
+
+Задача: Обнови краткое содержание, объединив старое резюме и новую информацию.
+Итоговое резюме должно быть связным текстом (2-4 предложения), охватывающим ВЕСЬ разговор целиком.
+
+Новое резюме:"""
+        else:
+            summarize_prompt = f"""Кратко суммируй основные темы и ключевые моменты этого разговора (2-3 предложения):
 
 {chr(10).join(text_parts)}
 
@@ -436,7 +553,7 @@ class MemoryManager:
             summary = await lm_client.chat(
                 messages=[{"role": "user", "content": summarize_prompt}],
                 stream=False,
-                max_tokens=200
+                max_tokens=300 # Increased for combined summary
             )
             
             # Save summary
@@ -457,55 +574,155 @@ class MemoryManager:
     # ==================== Facts Database ====================
     
     async def _extract_facts(self, message_id: int, content: str):
-        """Extract facts from user message using LLM."""
-        # P1 Fix: Lower threshold from 20 to 10 to catch "My name is Max"
+        """
+        Extract facts from user message using LM Studio JSON mode with GBNF grammar.
+        
+        Uses response_format with JSON Schema to guarantee valid structured output
+        via server-side token constraint (no parsing required).
+        """
         if len(content) < 10:  # Too short to contain facts
             return
         
-        # We need to import log locally to avoid circular imports if any, or check top level
-        # Assuming we can't easily add top-level import without mess, let's use print for now or safe import
         from .logger import log
-        log.debug(f"Extracting facts from message {message_id} (len={len(content)})")
+        log.api(f"🔍 FACT EXTRACTION STARTED for message {message_id}: '{content[:100]}...'")
         
-        extract_prompt = f"""Проанализируй сообщение и извлеки ключевые факты о пользователе (если есть).
-Факты могут быть о: имени, работе, интересах, предпочтениях, проектах.
-Если фактов нет - напиши "НЕТ".
-Если есть - напиши каждый факт на новой строке, начиная с категории в скобках.
-
-Сообщение: {content}
-
-Формат ответа:
-(personal) Пользователя зовут Иван
-(project) Работает над приложением для трекинга
-(preference) Предпочитает краткие ответы
-
-Факты:"""
-
         try:
-            response = await lm_client.chat(
+            import json
+            
+            # Define JSON Schema for structured fact extraction
+            json_schema = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "extracted_facts",
+                    "strict": True,  # Enable GBNF grammar enforcement
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "personal_facts": {
+                                "type": "array",
+                                "description": "Personal information: name, age, location, family, etc.",
+                                "items": {"type": "string"}
+                            },
+                            "preference_facts": {
+                                "type": "array",
+                                "description": "Interests, hobbies, likes, dislikes, favorites",
+                                "items": {"type": "string"}
+                            },
+                            "project_facts": {
+                                "type": "array",
+                                "description": "Work, profession, current projects, skills",
+                                "items": {"type": "string"}
+                            }
+                        },
+                        "required": ["personal_facts", "preference_facts", "project_facts"],
+                        "additionalProperties": False
+                    }
+                }
+            }
+            
+            # Craft extraction prompt
+            extract_prompt = f"""Extract ALL facts about the user from their message.
+
+USER MESSAGE: "{content}"
+
+Instructions:
+- Extract ANY personal information (name, age, location, family)
+- Extract ALL preferences (hobbies, interests, likes, dislikes)
+- Extract ALL work/project information (profession, current work, skills)
+- If a category has no facts, return empty array
+- Be thorough and extract EVERYTHING relevant
+
+Respond with valid JSON matching the schema."""
+
+            # Resolve extraction model
+            extraction_model = config.memory.extraction_model
+            if extraction_model == "auto":
+                from .config import config as app_config
+                extraction_model = app_config.lm_studio.reasoning_model
+                
+            # Call LM Studio with JSON Schema enforcement
+            response = await lm_client.client.chat.completions.create(
+                model=extraction_model,
                 messages=[{"role": "user", "content": extract_prompt}],
-                stream=False,
-                max_tokens=200
+                response_format=json_schema,  # GBNF grammar enforcement
+                temperature=0.1,  # Low temperature for consistent extraction
+                max_tokens=400  # Enough for multiple facts
             )
             
-            if "НЕТ" in response.upper():
-                return
+            # Parse guaranteed-valid JSON
+            facts_data = json.loads(response.choices[0].message.content)
             
-            # Parse facts
-            for line in response.strip().split('\n'):
-                line = line.strip()
-                if line.startswith('('):
-                    try:
-                        category = line[1:line.index(')')]
-                        fact_content = line[line.index(')')+1:].strip()
-                        if fact_content:
-                            await self.add_fact(fact_content, category, message_id)
-                    except (ValueError, IndexError):
-                        # P1 fix: Specific exception instead of bare except
-                        continue
+            log.api(f"📝 Extracted JSON: {json.dumps(facts_data, ensure_ascii=False)[:200]}...")
+            
+            # Save extracted facts to database
+            facts_added = 0
+            
+            for fact in facts_data.get("personal_facts", []):
+                if fact and len(fact.strip()) > 3:
+                    await self.add_fact(fact.strip(), "personal", message_id)
+                    log.api(f"💾 Personal fact saved: {fact}")
+                    facts_added += 1
+            
+            for fact in facts_data.get("preference_facts", []):
+                if fact and len(fact.strip()) > 3:
+                    await self.add_fact(fact.strip(), "preference", message_id)
+                    log.api(f"💾 Preference fact saved: {fact}")
+                    facts_added += 1
+            
+            for fact in facts_data.get("project_facts", []):
+                if fact and len(fact.strip()) > 3:
+                    await self.add_fact(fact.strip(), "project", message_id)
+                    log.api(f"💾 Project fact saved: {fact}")
+                    facts_added += 1
+            
+            if facts_added > 0:
+                log.api(f"✨ УСПЕХ: {facts_added} факт(ов) извлечено и сохранено (message {message_id})")
+            else:
+                log.api(f"📭 Фактов не обнаружено в сообщении {message_id}")
+                
+        except json.JSONDecodeError as e:
+            log.error(f"❌ JSON parsing failed (should never happen with schema): {e}")
+            log.error(f"   Response was: {response.choices[0].message.content[:200]}")
         except Exception as e:
-            # log is already imported in this method
-            log.error(f"Fact extraction error: {e}")
+            log.error(f"❌ Fact extraction error: {e}")
+            import traceback
+            log.error(traceback.format_exc())
+    
+    async def _extract_with_model(self, prompt: str, max_tokens: int = 200) -> str:
+        """
+        Call extraction model via LM Studio API.
+        
+        Simple approach: just call the model through API.
+        LM Studio will handle loading if needed.
+        """
+        from .logger import log
+        
+        extraction_model = config.memory.extraction_model
+        if extraction_model == "auto":
+            # Select best available reasoning model
+            extraction_model = config.lm_studio.reasoning_model
+            
+        try:
+            log.debug(f"🤖 Calling extraction model: {extraction_model}")
+            
+            # Direct API call - let LM Studio handle the model
+            response = await lm_client.client.chat.completions.create(
+                model=extraction_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_tokens,
+                temperature=0.1,
+                stream=False
+            )
+            
+            content = response.choices[0].message.content or ""
+            log.debug(f"✅ Extraction complete ({len(content)} chars)")
+            
+            return content
+            
+        except Exception as e:
+            log.error(f"Extraction failed: {e}")
+            log.warn(f"Make sure {extraction_model} is available in LM Studio")
+            return ""
     
     async def add_fact(
         self, 
@@ -514,47 +731,108 @@ class MemoryManager:
         source_message_id: Optional[int] = None
     ) -> Fact:
         """Add a fact to long-term memory."""
-        # Logic Fix: Deduplication
-        # Check if identical fact exists
-        async with self._db.execute(
-            "SELECT * FROM memory_facts WHERE content = ? LIMIT 1",
-            (content,)
-        ) as cursor:
-            existing = await cursor.fetchone()
-            if existing:
-                return Fact(
-                    id=existing["id"],
-                    content=existing["content"],
-                    category=existing["category"],
-                    confidence=existing["confidence"],
-                    created_at=existing["created_at"]
-                )
+        from .logger import log
+        
+        try:
+            log.debug(f"[SAVE] Attempting to save fact: [{category}] {content[:50]}...")
+            
+            # CONTENT QUALITY FILTER - don't save garbage
+            content = content.strip()
+            if content.startswith("http") or content.startswith("📄"):
+                # Strip URL prefix
+                if "\n" in content:
+                    content = content.split("\n", 1)[1].strip()
+            
+            if len(content) < 12:
+                log.debug(f"[SAVE] Content too short ({len(content)} chars), skipping")
+                return Fact(id=-1, content=content, category=category, embedding=None)
+            
+            # SMART DEDUPLICATION - check exact match AND prefix match
+            async with self._db.execute(
+                """SELECT * FROM memory_facts 
+                   WHERE content = ? OR content LIKE ? LIMIT 1""",
+                (content, content[:100] + "%")
+            ) as cursor:
+                existing = await cursor.fetchone()
+                if existing:
+                    log.debug(f"[SAVE] Duplicate found (ID: {existing['id']})")
+                    return Fact(
+                        id=existing["id"],
+                        content=existing["content"],
+                        category=existing["category"],
+                        embedding=json.loads(existing["embedding"].decode()) if existing["embedding"] else None
+                    )
 
-        # Get embedding for semantic search
-        embedding = await lm_client.get_embedding(content)
-        embedding_blob = json.dumps(embedding).encode() if embedding else None
+            # Get embedding for semantic search (optional - fallback works without)
+            log.debug("🔢 Generating embedding...")
+            try:
+                embedding = await lm_client.get_embedding(content)
+                if not embedding or len(embedding) == 0:
+                    log.warn(f"⚠️ Embedding empty (LM Studio embedding model not loaded) - saving without embedding")
+                    log.warn(f"   Fact will still work via fallback search")
+                    embedding = None
+                else:
+                    log.debug(f"✅ Embedding generated: {len(embedding)} dimensions")
+            except Exception as e:
+                log.debug(f"Embedding generation skipped: {e}")
+                embedding = None
+            
+            embedding_blob = json.dumps(embedding).encode() if embedding else None
+            
+            # Save to database
+            log.debug("💿 Writing to database...")
+            cursor = await self._db.execute(
+                """INSERT INTO memory_facts (content, category, embedding, source_message_id)
+                   VALUES (?, ?, ?, ?)""",
+                (content, category, embedding_blob, source_message_id)
+            )
+            await self._db.commit()
+            
+            fact_id = cursor.lastrowid
+            
+            # Verify persistence
+            async with self._db.execute(
+                "SELECT id FROM memory_facts WHERE id = ?", (fact_id,)
+            ) as verify_cursor:
+                verified = await verify_cursor.fetchone()
+                if not verified:
+                    log.error(f"❌ CRITICAL: Fact {fact_id} not found after commit!")
+                else:
+                    log.api(f"✅ FACT SAVED TO DATABASE (ID: {fact_id})")
+            
+            return Fact(
+                id=fact_id,
+                content=content,
+                category=category,
+                embedding=embedding
+            )
         
-        cursor = await self._db.execute(
-            """INSERT INTO memory_facts (content, category, embedding, source_message_id)
-               VALUES (?, ?, ?, ?)""",
-            (content, category, embedding_blob, source_message_id)
-        )
-        await self._db.commit()
-        
-        return Fact(
-            id=cursor.lastrowid,
-            content=content,
-            category=category,
-            embedding=embedding
-        )
+        except Exception as e:
+            log.error(f"❌ FAILED TO SAVE FACT: {e}")
+            import traceback
+            log.error(traceback.format_exc())
+            # Return dummy to avoid crashing extraction
+            return Fact(id=-1, content=content, category=category, embedding=None)
     
     async def get_relevant_facts(
         self,
         conversation_id: str,
         limit: int = 5,
-        max_tokens: int = 500
+        max_tokens: int = 500,
+        category: Optional[str] = None,
+        query: Optional[str] = None,
+        raw_embedding: Optional[List[float]] = None
     ) -> list[Fact]:
-        """Get facts relevant to current conversation using semantic similarity."""
+        """Get facts relevant to current conversation using semantic similarity.
+        
+        Args:
+            conversation_id: Conversation ID for context
+            limit: Maximum facts to return
+            max_tokens: Token budget
+            category: Filter by category ("general", "work", "shadow", "vault")
+            query: Optional custom query for semantic search
+            raw_embedding: Optional pre-calculated embedding for search
+        """
         # Get recent user messages for context
         messages = await self.get_messages(conversation_id, limit=5)
         user_messages = [m for m in messages if m.role == "user"]
@@ -562,24 +840,41 @@ class MemoryManager:
         if not user_messages:
             return []
 
-        # Build query from recent messages
-        query_text = " ".join([m.content for m in user_messages[-3:]])
+        # Build query from recent messages or use provided query
+        if query:
+            query_text = query
+        else:
+            query_text = " ".join([m.content for m in user_messages[-3:]])
 
         # Try semantic search with embeddings
-        query_embedding = await lm_client.get_embedding(query_text)
+        if raw_embedding:
+            query_embedding = raw_embedding
+        else:
+            query_embedding = await lm_client.get_embedding(query_text)
 
         if query_embedding:
-            # Get all facts with embeddings
-            async with self._db.execute(
-                "SELECT * FROM memory_facts WHERE embedding IS NOT NULL"
-            ) as cursor:
+            # Build SQL query with optional category filter
+            sql = "SELECT * FROM memory_facts WHERE embedding IS NOT NULL"
+            params = []
+            if category:
+                sql += " AND category = ?"
+                params.append(category)
+            
+            async with self._db.execute(sql, params) as cursor:
                 rows = await cursor.fetchall()
 
-            # Calculate relevance scores
+            # Calculate relevance scores with embedding cache
             scored_facts = []
             for row in rows:
                 try:
-                    fact_embedding = json.loads(row["embedding"].decode())
+                    fact_id = row["id"]
+                    # Check embedding cache first (RAM optimization)
+                    if fact_id in self._embedding_cache:
+                        fact_embedding = self._embedding_cache[fact_id]
+                    else:
+                        fact_embedding = json.loads(row["embedding"].decode())
+                        self._embedding_cache[fact_id] = fact_embedding
+                    
                     score = self._cosine_similarity(query_embedding, fact_embedding)
                     scored_facts.append((row, score))
                 except (json.JSONDecodeError, AttributeError):
@@ -589,13 +884,20 @@ class MemoryManager:
             scored_facts.sort(key=lambda x: x[1], reverse=True)
             rows = [sf[0] for sf in scored_facts[:limit * 2]]  # Get more for token filtering
         else:
-            # Fallback to recent facts
-            async with self._db.execute(
-                """SELECT * FROM memory_facts
-                   ORDER BY last_accessed DESC NULLS LAST, created_at DESC
-                   LIMIT ?""",
-                (limit * 2,)
-            ) as cursor:
+            # Fallback: get ALL facts (no embedding-based filtering)
+            from .logger import log
+            log.warn("No embeddings available for semantic search, using fallback")
+            
+            # Build SQL with optional category filter
+            sql = "SELECT * FROM memory_facts"
+            params = []
+            if category:
+                sql += " WHERE category = ?"
+                params.append(category)
+            sql += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit * 2)
+            
+            async with self._db.execute(sql, params) as cursor:
                 rows = await cursor.fetchall()
 
         # Filter by token budget
@@ -608,8 +910,7 @@ class MemoryManager:
                 id=row["id"],
                 content=row["content"],
                 category=row["category"],
-                confidence=row["confidence"],
-                created_at=row["created_at"]
+                embedding=json.loads(row["embedding"].decode()) if row["embedding"] else None
             )
             fact_tokens = self.count_tokens(fact.content)
             if tokens + fact_tokens > max_tokens:
@@ -724,6 +1025,68 @@ class MemoryManager:
             )
             for row in rows
         ]
+
+    # ==================== Titans + MIRAS Helpers ====================
+
+    async def _titans_learn(self, content: str):
+        """Background task for Titans neural learning."""
+        try:
+            embedding = await lm_client.get_embedding(content)
+            if embedding:
+                # Test-Time Training (TTT) logic inside process_signal
+                result = await self.titans.process_signal(embedding)
+                if result.get("is_stored"):
+                    from .logger import log
+                    log.api(f"🧠 [TITANS] Neural Memory updated (Surprise: {result['surprise']:.2f})")
+        except Exception as e:
+            from .logger import log
+            log.error(f"Titans learning failed: {e}")
+
+    async def _get_titans_context(self, conversation_id: str) -> Optional[str]:
+        """Get associative neural context from Titans."""
+        try:
+            # Get last user message to trigger recall
+            messages = await self.get_messages(conversation_id, limit=1)
+            if not messages:
+                return None
+            
+            last_msg = messages[-1].content
+            embedding = await lm_client.get_embedding(last_msg)
+            if not embedding:
+                return None
+            
+            # 1. Neural Recall (Association from weights)
+            titans_res = await self.titans.process_signal(embedding)
+            recall_emb = titans_res.get("recall_embedding")
+            
+            if not recall_emb:
+                return None
+            
+            # 2. Associative Search: find facts nearest to the NEURAL recall
+            # This implements the bridge between neural weights and structured data
+            associative_facts = await self.get_relevant_facts(
+                conversation_id,
+                raw_embedding=recall_emb, # Use the neural recall directly!
+                limit=3
+            )
+            
+            if associative_facts:
+                facts_text = "\n".join([f"• {f.content}" for f in associative_facts])
+                return f"[НЕЙРОННАЯ ИНТУИЦИЯ (TITANS)]:\nСистема ассоциирует текущий контекст со следующими фактами:\n{facts_text}"
+            
+            return None
+        except Exception as e:
+            from .logger import log
+            log.error(f"Titans recall failed: {e}")
+            return None
+
+    async def delete_fact(self, fact_id: int) -> bool:
+        """Delete a fact from long-term memory."""
+        cursor = await self._db.execute(
+            "DELETE FROM memory_facts WHERE id = ?", (fact_id,)
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
 
 
 # Global memory manager instance

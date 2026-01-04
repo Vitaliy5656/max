@@ -1,0 +1,200 @@
+{
+  "project": "LGBTQ_CIS_2025",
+  "started_at": "2025-12-20T07:37:33.981837",
+  "completed_topics": [
+    {
+      "index": 0,
+      "topic": "ЛГБТ психология каминг аут СНГ Россия",
+      "result": {
+        "topic": "ЛГБТ психология каминг аут СНГ Россия",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:39:02.647352"
+    },
+    {
+      "index": 1,
+      "topic": "психологические проблемы геев СНГ",
+      "result": {
+        "topic": "психологические проблемы геев СНГ",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:40:31.920145"
+    },
+    {
+      "index": 2,
+      "topic": "ЛГБТ психотерапия Россия Казахстан",
+      "result": {
+        "topic": "ЛГБТ психотерапия Россия Казахстан",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:41:59.269773"
+    },
+    {
+      "index": 3,
+      "topic": "гомофобия влияние на психику СНГ",
+      "result": {
+        "topic": "гомофобия влияние на психику СНГ",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:43:19.815353"
+    },
+    {
+      "index": 4,
+      "topic": "ЛГБТ сообщество СНГ статистика 2024 2025",
+      "result": {
+        "topic": "ЛГБТ сообщество СНГ статистика 2024 2025",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:44:53.767803"
+    },
+    {
+      "index": 5,
+      "topic": "геи лесбиянки Россия Казахстан Украина сообщества",
+      "result": {
+        "topic": "геи лесбиянки Россия Казахстан Украина сообщества",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:45:54.132824"
+    },
+    {
+      "index": 6,
+      "topic": "права ЛГБТ СНГ законодательство",
+      "result": {
+        "topic": "права ЛГБТ СНГ законодательство",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:46:39.530941"
+    },
+    {
+      "index": 7,
+      "topic": "дискриминация ЛГБТ на работе СНГ",
+      "result": {
+        "topic": "дискриминация ЛГБТ на работе СНГ",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:49:08.377394"
+    },
+    {
+      "index": 8,
+      "topic": "ЛГБТ секс СНГ",
+      "result": {
+        "topic": "ЛГБТ секс СНГ",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:49:13.389106"
+    },
+    {
+      "index": 9,
+      "topic": "секс геев в СНГ",
+      "result": {
+        "topic": "секс геев в СНГ",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:49:34.674276"
+    },
+    {
+      "index": 10,
+      "topic": "как происходит секс у геев",
+      "result": {
+        "topic": "как происходит секс у геев",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:49:56.152029"
+    },
+    {
+      "index": 11,
+      "topic": "секс геев в русской среде проблемы",
+      "result": {
+        "topic": "секс геев в русской среде проблемы",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:50:17.572058"
+    },
+    {
+      "index": 12,
+      "topic": "секс русских однополых пар как",
+      "result": {
+        "topic": "секс русских однополых пар как",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:50:38.950188"
+    },
+    {
+      "index": 13,
+      "topic": "русские геи и сексуальная жизнь",
+      "result": {
+        "topic": "русские геи и сексуальная жизнь",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:51:00.416427"
+    },
+    {
+      "index": 14,
+      "topic": "однополые отношения СНГ проблемы",
+      "result": {
+        "topic": "однополые отношения СНГ проблемы",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:51:48.847396"
+    },
+    {
+      "index": 15,
+      "topic": "ЛГБТ семьи дети СНГ",
+      "result": {
+        "topic": "ЛГБТ семьи дети СНГ",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:52:26.581480"
+    },
+    {
+      "index": 16,
+      "topic": "LGBT psychology CIS Russia",
+      "result": {
+        "topic": "LGBT psychology CIS Russia",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:53:04.346142"
+    },
+    {
+      "index": 17,
+      "topic": "gay rights Central Asia 2024",
+      "result": {
+        "topic": "gay rights Central Asia 2024",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:53:42.187387"
+    },
+    {
+      "index": 18,
+      "topic": "LGBTQ mental health post-Soviet countries",
+      "result": {
+        "topic": "LGBTQ mental health post-Soviet countries",
+        "error": "'list' object has no attribute 'steps'",
+        "success": false
+      },
+      "completed_at": "2025-12-20T07:54:20.128951"
+    }
+  ],
+  "current_topic_index": 18,
+  "total_facts_saved": 0,
+  "total_pages_visited": 0,
+  "last_checkpoint": "2025-12-20T07:54:20.128951"
+}

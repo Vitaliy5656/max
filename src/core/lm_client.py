@@ -11,14 +11,17 @@ Features:
 """
 import asyncio
 import json
+import time as import_time
 from typing import AsyncIterator, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
 import httpx
+import numpy as np
 from openai import AsyncOpenAI
 
 from .config import config
 from .safe_shell import safe_shell
+from .logger import log
 
 
 class TaskType(Enum):
@@ -170,12 +173,37 @@ class LMStudioClient:
         except Exception:
             return None
 
-    async def get_loaded_model(self) -> Optional[str]:
-        """Get currently loaded model (API check)."""
+    async def get_loaded_models_via_cli(self) -> list[str]:
+        """Use 'lms ps' to get currently loaded models in VRAM."""
         try:
-            # Fast check
+            result = await safe_shell.execute("lms ps", timeout=10.0)
+            if result.return_code != 0:
+                return []
+            
+            lines = result.stdout.splitlines()
+            loaded = []
+            for line in lines:
+                if not line or line.startswith("IDENTIFIER") or "-----" in line:
+                    continue
+                parts = line.split()
+                if parts:
+                    loaded.append(parts[0])
+            return loaded
+        except Exception as e:
+            log.error(f"Error checking loaded models via CLI: {e}")
+            return []
+
+    async def get_loaded_model(self) -> Optional[str]:
+        """Get currently loaded model (API check fallback to CLI)."""
+        try:
+            # API check
             models = await self.list_models()
-            return models[0].id if models else None
+            if models:
+                return models[0].id
+            
+            # CLI check if API is silent
+            loaded_cli = await self.get_loaded_models_via_cli()
+            return loaded_cli[0] if loaded_cli else None
         except:
             return None
     
@@ -310,21 +338,49 @@ class LMStudioClient:
         return config.lm_studio.thinking_modes["standard"]
     
     async def get_model_for_task(self, task_type: TaskType) -> str:
-        """Smart routing: get best model for task type."""
-        # Use available models if cached, else use config defaults
-        # Only do a quick check if we have cache, don't force scan
-        available = await self.get_available_models(force_refresh=False)
+        """
+        Smart routing: get best model for task type STICKING ONLY to loaded models if possible.
+        """
+        # Strictly check what is in VRAM right now
+        loaded_ids = await self.get_loaded_models_via_cli()
         
-        # TODO: Implement sophisticated matching against 'available'
-        # For now, sticking to config defaults but logging intent
-        if task_type == TaskType.VISION:
-            return config.lm_studio.vision_model
-        elif task_type == TaskType.REASONING:
-            return config.lm_studio.reasoning_model
-        elif task_type == TaskType.QUICK:
-            return config.lm_studio.quick_model
-        else:
+        # Filter out embeddings
+        loaded_ids = [m for m in loaded_ids if "embed" not in m.lower() and "bge" not in m.lower()]
+        
+        if not loaded_ids:
+            # Fallback to API check if CLI fails
+            loaded = await self.list_models()
+            loaded_ids = [m.id for m in loaded if "embed" not in m.id.lower() and "bge" not in m.id.lower()]
+        
+        if not loaded_ids:
+            log.warn("No models loaded in LM Studio! Using config default (unsafe).")
             return config.lm_studio.default_model
+        
+        # Helper to check if model name suggests a certain role (REASONING vs QUICK)
+        def is_strong(m_id: str) -> bool:
+            m_id = m_id.lower()
+            return any(kw in m_id for kw in ["large", "12b", "14b", "24b", "30b", "32b", "70b", "deepseek-r1", "ministral", "mistral", "nemo", "command-r", "llama", "qwen", "gemma", "3-14b"])
+            
+        def is_quick(m_id: str) -> bool:
+            m_id = m_id.lower()
+            return any(kw in m_id for kw in ["small", "mini", "phi", "1b", "3b", "0.5b", "flash", "haiku"])
+
+        if task_type in [TaskType.REASONING, TaskType.DEFAULT]:
+            for m_id in loaded_ids:
+                if is_strong(m_id): return m_id
+            
+        elif task_type == TaskType.QUICK:
+            for m_id in loaded_ids:
+                if is_quick(m_id): return m_id
+            
+        elif task_type == TaskType.VISION:
+            for m_id in loaded_ids:
+                if "vision" in m_id.lower() or "pixtral" in m_id.lower(): return m_id
+
+        # Strict Fallback: Use whatever is loaded
+        best_of_loaded = loaded_ids[0]
+        log.lm(f"GPU Safe: using already loaded '{best_of_loaded}' for {task_type.value}")
+        return best_of_loaded
     
     def detect_task_type(self, message: str, has_image: bool = False) -> TaskType:
         """Auto-detect task type from message content."""
@@ -411,13 +467,67 @@ class LMStudioClient:
         # Get mode configuration
         mode_config = self.get_mode_config(thinking_mode)
         
-        # Use mode settings if not explicitly overridden
-        if not model:
-            model = mode_config.model
-        if temperature is None:
-            temperature = mode_config.temperature
-        if max_tokens is None:
-            max_tokens = mode_config.max_tokens
+        # SMART ROUTER INTEGRATION (P0 Audit Fix)
+        # If no specific model/task is requested, spy on the prompt to route intelligently
+        if not model and not task_type and not kwargs.get("tools"):
+             try:
+                 from .routing import get_smart_router
+                 last_user_msg = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+                 if last_user_msg:
+                     # Fast routing (cache optimized)
+                     router = get_smart_router()
+                     route_result = await router.route(last_user_msg)
+                     
+                     if route_result.intent == "coding":
+                         task_type = TaskType.CODING
+                         log.lm(f"🔀 Smart Router: Detected CODING intent -> {task_type}")
+                     elif route_result.intent == "math" or "reasoning" in route_result.intent:
+                         task_type = TaskType.REASONING
+                         log.lm(f"🔀 Smart Router: Detected REASONING intent -> {task_type}")
+                     elif route_result.safety_level in ["paranoid", "guarded"]:
+                         # Potential use of specific safe models
+                         pass
+             except ImportError:
+                 pass
+             except Exception as e:
+                 # Don't let routing crash the chat
+                 log.lm(f"⚠️ Smart Routing failed: {e}")
+
+        # Model Selection Logic based on mode
+        # Model Selection Logic based on mode
+        if config.lm_studio.model_selection_mode == "manual":
+            # MANUAL MODE: Thinking modes do NOT change model automatically via CLI
+            # Но мы должны выбрать ЛУЧШУЮ ЗАГРУЖЕННУЮ модель, если она не указана явно
+            if not model:
+                # If task_type is provided, use it to select from loaded
+                current_task = task_type
+                if not current_task:
+                    # Map thinking_mode back to TaskType
+                    if thinking_mode == ThinkingMode.DEEP: current_task = TaskType.REASONING
+                    elif thinking_mode == ThinkingMode.VISION: current_task = TaskType.VISION
+                    elif thinking_mode == ThinkingMode.FAST: current_task = TaskType.QUICK
+                    else: current_task = TaskType.DEFAULT
+                
+                model = await self.get_model_for_task(current_task)
+                log.lm(f"🎯 MANUAL mode best match: {model} for {current_task.value}")
+            else:
+                log.lm(f"🎯 MANUAL mode explicit: {model}")
+            
+            # Apply only thinking parameters (not model)
+            if temperature is None:
+                temperature = mode_config.temperature
+            if max_tokens is None:
+                max_tokens = mode_config.max_tokens
+        else:
+            # AUTO MODE: Thinking modes select optimal model (legacy behavior)
+            if not model:
+                model = mode_config.model
+                log.lm(f"🧠 AUTO mode: thinking mode selected model: {model}")
+            
+            if temperature is None:
+                temperature = mode_config.temperature
+            if max_tokens is None:
+                max_tokens = mode_config.max_tokens
         
         # Inject system prompt suffix for thinking mode (Chain-of-Thought)
         if mode_config.system_prompt_suffix:
@@ -445,13 +555,45 @@ class LMStudioClient:
         self._current_model = model
 
         if stream:
-            return self._stream_response(params)
+            from .parallel import SlotPriority
+            # P0 Fix: Wrap streaming with SlotManager
+            return self._stream_with_slots(params, priority=SlotPriority.STANDARD)
         else:
-            # P2 fix: Apply rate limiting
+            # P2 fix: Apply rate limiting AND SlotManager
+            # Note: For non-streaming, we just wait for slot
             async with self._request_semaphore:
                 await self._enforce_rate_limit()
+                
+                log.lm(f"🚀 Non-streaming request to: {model} (max_tokens: {max_tokens})")
                 response = await self.client.chat.completions.create(**params)
-                return response.choices[0].message.content or ""
+                content = response.choices[0].message.content or ""
+                log.lm(f"✅ Non-streaming response received ({len(content)} chars)")
+                return content
+
+    async def _stream_with_slots(self, params: dict, priority: Any) -> AsyncIterator[str]:
+        """Stream response with Slot management (Heartbeats)."""
+        from .parallel import slot_manager, SlotPriority
+        
+        request_id = f"req_{int(import_time.time()*1000)}"
+        
+        try:
+            # 1. Acquire Slot (Yields heartbeats while waiting)
+            async for status in slot_manager.acquire_slot(request_id, priority):
+                if status == "waiting":
+                    yield {"_meta": "queue_heartbeat"}
+                elif status == "acquired":
+                    break
+            
+            # 2. Add Request Header for Tracking (Optional)
+            # params["extra_headers"] = {"X-Request-ID": request_id}
+            
+            # 3. Stream
+            async for chunk in self._stream_response(params):
+                yield chunk
+                
+        finally:
+            # 4. Release Slot
+            slot_manager.release_slot(request_id)
 
     def _inject_thinking_prompt(self, messages: list[dict], suffix: str) -> list[dict]:
         """
@@ -493,43 +635,46 @@ class LMStudioClient:
         ("<reflection>", "</reflection>"), # Reflection models
     ]
     
-    async def _stream_response(self, params: dict) -> AsyncIterator[str]:
+    async def _stream_response(self, params: dict, _retry_count: int = 0) -> AsyncIterator[str]:
         """
         Stream response chunks with multi-pattern think tag filtering.
-        
+
         Supports various reasoning models:
         - DeepSeek R1: <think>...</think>
         - Claude-style: <thinking>...</thinking>
         - Generic: <reasoning>...</reasoning>
-        
+
         Uses buffering to handle tags split across chunk boundaries.
+        Includes retry logic for empty responses (common with short questions).
         """
         import re
         from .logger import log
-        
+
+        MAX_RETRIES = 2  # Retry up to 2 times for empty responses
+
         # State machine
         in_think_block = False
         current_close_tag = ""
         pending_buffer = ""  # Buffer for potential partial tags
         think_content = ""   # Accumulated thinking content
         think_start_time = 0.0  # Timestamp when thinking started
-        
+
         # Stats for logging
         chunk_count = 0
         total_chars_received = 0
         total_chars_yielded = 0
         total_chars_filtered = 0
-        
+
         # Pre-compile patterns for efficiency
         open_pattern = re.compile(r'<(think|thinking|reasoning|reflection)>', re.IGNORECASE)
-        
+
         model = params.get("model", "unknown")
-        # log.lm_stream_start(model) is called by logger internally via events? 
-        # Actually log.lm_stream_start is a method of Logger. 
+        # log.lm_stream_start(model) is called by logger internally via events?
+        # Actually log.lm_stream_start is a method of Logger.
         # The original code had print then log calls. We unify.
         log.lm(f"Starting stream for model={model}")
         log.lm_stream_start(model)
-        
+
         try:
             log.lm("Creating chat completion...", model=model)
             stream = await self.client.chat.completions.create(**params)
@@ -540,7 +685,7 @@ class LMStudioClient:
                 
                 # Check for empty chunk
                 if not chunk.choices:
-                    log.stream(f"[#{chunk_count:03d}] Empty chunk (no choices)", level="DEBUG")
+                    # Silenced: Empty chunk log
                     continue
                 
                 delta = chunk.choices[0].delta
@@ -548,18 +693,18 @@ class LMStudioClient:
                     # Log finish reason if present
                     finish_reason = chunk.choices[0].finish_reason
                     if finish_reason:
-                        log.stream(f"[#{chunk_count:03d}] Finish signal", reason=finish_reason)
+                        pass  # Silenced: Finish signal log
                     continue
                     
                 content = delta.content
                 total_chars_received += len(content)
                 
-                # Log raw chunk received
-                preview = content.replace("\n", "\\n")[:40]
-                log.stream(f"[#{chunk_count:03d}] RAW CHUNK", 
-                          chars=len(content), 
-                          preview=f'"{preview}"',
-                          state="THINK" if in_think_block else "NORMAL")
+                # Silenced: Raw chunk logs to reduce spam
+                # preview = content.replace("\n", "\\n")[:40]
+                # log.stream(f"[#{chunk_count:03d}] RAW CHUNK", 
+                #           chars=len(content), 
+                #           preview=f'"{preview}"',
+                #           state="THINK" if in_think_block else "NORMAL")
                 
                 pending_buffer += content
                 
@@ -579,7 +724,7 @@ class LMStudioClient:
                             before_tag = pending_buffer[:match.start()]
                             if before_tag:
                                 total_chars_yielded += len(before_tag)
-                                log.stream(f"  → YIELD (before tag)", chars=len(before_tag))
+                                # Silenced: Yield log
                                 yield before_tag
                             
                             # Enter think mode
@@ -599,7 +744,7 @@ class LMStudioClient:
                                 to_yield = pending_buffer[:-1]
                                 if to_yield:
                                     total_chars_yielded += len(to_yield)
-                                    log.stream(f"  → YIELD (partial '<' held)", chars=len(to_yield))
+                                    # Silenced: Yield log
                                     yield to_yield
                                 pending_buffer = '<'
                                 break
@@ -618,9 +763,7 @@ class LMStudioClient:
                                     to_yield = pending_buffer[:last_lt]
                                     if to_yield:
                                         total_chars_yielded += len(to_yield)
-                                        log.stream(f"  → YIELD (partial tag held)", 
-                                                  chars=len(to_yield),
-                                                  held=f'"{potential}"')
+                                        # Silenced: Yield log
                                         yield to_yield
                                     pending_buffer = potential
                                     break
@@ -633,7 +776,7 @@ class LMStudioClient:
                             else:
                                 # No potential tags, yield all
                                 total_chars_yielded += len(pending_buffer)
-                                log.stream(f"  → YIELD (clean)", chars=len(pending_buffer))
+                                # Silenced: Yield log
                                 yield pending_buffer
                                 pending_buffer = ""
                     else:
@@ -668,18 +811,36 @@ class LMStudioClient:
                         else:
                             # Still in think block, accumulate
                             think_content += pending_buffer
-                            log.think(f"  Accumulating think content", 
-                                     total_think_chars=len(think_content))
+                            # Silenced: Think accumulation log
                             pending_buffer = ""
                             break
             
             # Log final stats
             log.lm_stream_end(chunk_count)
-            log.lm(f"📊 STREAM STATS", 
+            log.lm(f"📊 STREAM STATS",
                    received=total_chars_received,
                    yielded=total_chars_yielded,
                    filtered=total_chars_filtered)
-                        
+
+            # P0 FIX: Retry logic for empty responses
+            # This is common with short questions like "Как меня зовут?"
+            if total_chars_yielded == 0 and _retry_count < MAX_RETRIES:
+                log.warn(f"⚠️ Empty response detected, retrying ({_retry_count + 1}/{MAX_RETRIES})...")
+                # Add a small delay before retry
+                await asyncio.sleep(0.5)
+                # Retry with slightly higher temperature to encourage response
+                retry_params = params.copy()
+                retry_params["temperature"] = min(params.get("temperature", 0.7) + 0.2, 1.0)
+                async for chunk in self._stream_response(retry_params, _retry_count + 1):
+                    yield chunk
+                return
+
+            # If still empty after all retries, yield a fallback message
+            if total_chars_yielded == 0:
+                log.error(f"❌ Model returned NO content after {_retry_count + 1} attempts")
+                fallback_msg = "К сожалению, модель не смогла сгенерировать ответ. Попробуйте переформулировать вопрос или добавить больше контекста."
+                yield fallback_msg
+
         except Exception as e:
             log.error(f"Stream exception: {type(e).__name__}: {e}")
             import traceback
@@ -759,13 +920,25 @@ class LMStudioClient:
     
     async def get_embedding(self, text: str) -> list[float]:
         """Get embedding vector for text."""
+        # Type safety check to prevent "double embedding" errors
+        if isinstance(text, (list, np.ndarray)):
+            log.warn(f"⚠️ get_embedding called with already-computed vector (Type: {type(text)})")
+            if isinstance(text, np.ndarray):
+                return text.tolist()
+            return text
+            
+        if not isinstance(text, str):
+            log.error(f"❌ get_embedding called with invalid type: {type(text)}")
+            return []
+
         try:
             response = await self.client.embeddings.create(
-                model="text-embedding-model",  # LM Studio embedding model
+                model="text-embedding-bge-m3",  # LM Studio embedding model
                 input=text
             )
             return response.data[0].embedding
-        except Exception:
+        except Exception as e:
+            log.error(f"Embedding API error: {e}")
             # Silent fail - embeddings are optional, system uses keyword fallback
             return []
 

@@ -545,10 +545,26 @@ class UserProfile:
     def current_mood(self) -> Mood:
         return self._current_mood
     
-    @property
-    def habits(self) -> Optional[UserHabits]:
-        """Get user habits for external access."""
-        return self._habits
+    async def get_profile_summary_for_context(self, conversation_id: str) -> str:
+        """
+        Get a concise profile summary for System 2 cognitive context.
+        """
+        parts = []
+        if self._name:
+            parts.append(f"Name: {self._name}")
+        
+        if self._preferences:
+            parts.append(f"Style: {self._preferences.verbosity.value}, {self._preferences.formality.value}")
+            parts.append(f"Humor: {'Yes' if self._preferences.use_humor else 'No'}")
+        
+        if self._habits and self._habits.frequent_topics:
+            topics = ", ".join(self._habits.frequent_topics[:5])
+            parts.append(f"Interests: {topics}")
+            
+        if self._dislikes:
+             parts.append(f"Avoid: {', '.join(self._dislikes)}")
+             
+        return " | ".join(parts)
 
 
 # Global user profile instance

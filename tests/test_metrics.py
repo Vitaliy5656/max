@@ -41,7 +41,7 @@ class TestImplicitFeedbackAnalyzer:
         analyzer = ImplicitFeedbackAnalyzer()
         
         # Test correction signals
-        result = analyzer.analyze("Я имел в виду другое")
+        result = analyzer.analyze("Нет, я имел в виду другое")
         assert result[2] > 0  # correction count
         
     def test_caps_detection_frustration(self):

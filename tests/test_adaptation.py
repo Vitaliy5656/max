@@ -47,15 +47,17 @@ class TestCorrectionDetector:
         detector = CorrectionDetector()
         assert hasattr(detector, 'detect')
         
-    def test_detect_returns_dict(self):
-        """Test detect returns expected structure."""
+    def test_detect_returns_tuple(self):
+        """Test detect returns expected structure (bool, optional_detail)."""
         from src.core.adaptation import CorrectionDetector
         
         detector = CorrectionDetector()
         result = detector.detect("Test message")
         
-        assert isinstance(result, dict)
-        assert "is_correction" in result
+        # API returns (is_correction: bool, details: optional)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert isinstance(result[0], bool)
 
 
 class TestAnticipationEngine:
@@ -91,7 +93,7 @@ class TestAdaptivePromptBuilder:
         from src.core.adaptation import AdaptivePromptBuilder
         
         builder = AdaptivePromptBuilder()
-        assert hasattr(builder, 'build')
+        assert hasattr(builder, 'build_adaptive_prompt')
 
 
 class TestGlobalInstances:

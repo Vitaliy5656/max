@@ -35,6 +35,8 @@ class SearchResult:
     title: str
     url: str
     snippet: str
+    validation_status: Optional[str] = None  # "verified" | "invalid" | "pending"
+    confidence: float = 1.0  # URL validation confidence (0.0 - 1.0)
     
 
 class WebSearcher:

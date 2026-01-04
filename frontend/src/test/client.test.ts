@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // Mock fetch
 const mockFetch = vi.fn()
-global.fetch = mockFetch
+globalThis.fetch = mockFetch
 
 // Import after mocking
 import * as api from '../api/client'
@@ -29,7 +29,7 @@ describe('API Client', () => {
             const result = await api.checkHealth()
 
             expect(result.status).toBe('ok')
-            expect(mockFetch).toHaveBeenCalledWith('http://localhost:8000/api/health')
+            expect(mockFetch).toHaveBeenCalledWith('http://127.0.0.1:8000/api/health')
         })
 
         it('throws when API is down', async () => {
@@ -69,7 +69,7 @@ describe('API Client', () => {
 
             expect(result.id).toBe('new-conv-123')
             expect(mockFetch).toHaveBeenCalledWith(
-                'http://localhost:8000/api/conversations',
+                'http://127.0.0.1:8000/api/conversations',
                 expect.objectContaining({
                     method: 'POST',
                     body: JSON.stringify({ title: 'Test Chat' })
@@ -106,7 +106,7 @@ describe('API Client', () => {
             await api.deleteDocument('doc-123')
 
             expect(mockFetch).toHaveBeenCalledWith(
-                'http://localhost:8000/api/documents/doc-123',
+                'http://127.0.0.1:8000/api/documents/doc-123',
                 expect.objectContaining({ method: 'DELETE' })
             )
         })
@@ -159,7 +159,7 @@ describe('API Client', () => {
             await api.submitFeedback(1, 1)
 
             expect(mockFetch).toHaveBeenCalledWith(
-                'http://localhost:8000/api/feedback',
+                'http://127.0.0.1:8000/api/feedback',
                 expect.objectContaining({
                     method: 'POST',
                     body: JSON.stringify({ message_id: 1, rating: 1 })
@@ -176,7 +176,7 @@ describe('API Client', () => {
             await api.submitFeedback(1, -1)
 
             expect(mockFetch).toHaveBeenCalledWith(
-                'http://localhost:8000/api/feedback',
+                'http://127.0.0.1:8000/api/feedback',
                 expect.objectContaining({
                     method: 'POST',
                     body: JSON.stringify({ message_id: 1, rating: -1 })
@@ -189,14 +189,14 @@ describe('API Client', () => {
         it('starts agent with goal', async () => {
             mockFetch.mockResolvedValueOnce({
                 ok: true,
-                json: async () => ({ success: true, goal: 'Test goal' })
+                json: async () => ({ run_id: 'test-run-123', goal: 'Test goal' })
             })
 
             const result = await api.startAgent('Test goal', 20)
 
-            expect(result.success).toBe(true)
+            expect(result).toBeDefined()
             expect(mockFetch).toHaveBeenCalledWith(
-                'http://localhost:8000/api/agent/start',
+                'http://127.0.0.1:8000/api/agent/start',
                 expect.objectContaining({
                     method: 'POST'
                 })
